@@ -944,70 +944,358 @@ if uploaded_file is not None:
                 results["text"]
             )
 
+
 # ==========================================================
-# STEP 6 — EMAIL AUTHENTICITY CHECKER
+# STEP 7 — SCREENSHOT-BASED PHISHING EMAIL CHECKER
 # ==========================================================
+
+import re
+from pathlib import Path
+
+import pytesseract
+from PIL import Image
+import streamlit as st
+
+# Separate model for phishing detection.
+# Do NOT reuse pei_model.pkl for this task.
+PHISHING_MODEL_PATH = Path("phishing_model.pkl")
+
+
+def extract_email_text(image):
+    """Extract visible email text from a screenshot using OCR."""
+    return pytesseract.image_to_string(image).strip()
+
+
+def analyze_phishing_features(text):
+    """
+    Extract simple, explainable phishing indicators.
+    These indicators are heuristics, not proof of fraud.
+    """
+    text_lower = text.lower()
+
+    urgency_terms = [
+        "urgent", "immediately", "act now", "expires today",
+        "within 24 hours", "suspended", "final warning",
+        "account will be closed", "verify now"
+    ]
+
+    credential_terms = [
+        "password", "login", "log in", "sign in",
+        "verify your account", "confirm your identity",
+        "one-time password", "otp", "security code"
+    ]
+
+    threat_terms = [
+        "account suspended", "account blocked",
+        "permanently disabled", "legal action",
+        "unauthorized activity", "unusual activity",
+        "account will be closed"
+    ]
+
+    money_terms = [
+        "prize", "winner", "claim your reward",
+        "free money", "payment required", "transfer money",
+        "bank details", "claim your gift"
+    ]
+
+    # Look for visible URLs in the OCR text.
+    urls = re.findall(
+        r"(?:https?://|www\.)[^\s<>\"']+",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    urgency = int(any(term in text_lower for term in urgency_terms))
+    credentials = int(
+        any(term in text_lower for term in credential_terms)
+    )
+    threat = int(any(term in text_lower for term in threat_terms))
+    money = int(any(term in text_lower for term in money_terms))
+    link_present = int(len(urls) > 0)
+
+    # Normalize the number of visible URLs to a value between 0 and 1.
+    url_count_score = min(len(urls) / 3, 1.0)
+
+    features = {
+        "urgency": urgency,
+        "credentials": credentials,
+        "link_present": link_present,
+        "threat": threat,
+        "money": money,
+        "url_count_score": url_count_score,
+        "urls": urls
+    }
+
+    return features
+
+
+def calculate_pri(features):
+    """
+    Phishing Risk Index (PRI), ranging from 0 to 100.
+
+    PRI = 100 * (
+        0.20U + 0.25C + 0.15L
+        + 0.20T + 0.10M + 0.10N
+    )
+
+    U = urgency indicator
+    C = credential-request indicator
+    L = visible-link indicator
+    T = threat indicator
+    M = money/reward indicator
+    N = normalized URL count
+
+    Weights are provisional and require empirical validation.
+    """
+    pri = 100 * (
+        0.20 * features["urgency"]
+        + 0.25 * features["credentials"]
+        + 0.15 * features["link_present"]
+        + 0.20 * features["threat"]
+        + 0.10 * features["money"]
+        + 0.10 * features["url_count_score"]
+    )
+
+    return round(pri, 2)
+
+
+def classify_pri(pri):
+    """Provisional screening categories, not validated probabilities."""
+    if pri < 30:
+        return "LOWER RISK"
+    elif pri < 60:
+        return "NEEDS REVIEW"
+    return "HIGH PHISHING RISK"
+
+
+def load_phishing_model():
+    """Load a separately trained phishing model when available."""
+    if not PHISHING_MODEL_PATH.exists():
+        return None
+
+    try:
+        import joblib
+        return joblib.load(PHISHING_MODEL_PATH)
+    except Exception:
+        return None
+
+
+# ----------------------------------------------------------
+# USER INTERFACE
+# ----------------------------------------------------------
 
 st.divider()
-
-st.header("📧 Email Authenticity Checker")
+st.header("📧 Screenshot-Based Phishing Email Checker")
 
 st.write(
-    "Check an email address's format and domain mail-server "
-    "configuration. This does not guarantee that the mailbox "
-    "exists or that the sender is trustworthy."
+    "Upload a screenshot of an email to extract its visible text, "
+    "identify potential warning signs, and calculate a mathematical "
+    "Phishing Risk Index (PRI)."
 )
 
-email_input = st.text_input(
-    "Enter an email address",
-    placeholder="example@domain.com",
-    key="email_authenticity_input"
+st.info(
+    "A low score does not guarantee that an email is safe. "
+    "The checker cannot confirm sender identity from a screenshot alone."
 )
 
-if st.button("🔎 Check Email", key="check_email_button"):
+email_screenshot = st.file_uploader(
+    "Upload an email screenshot",
+    type=["png", "jpg", "jpeg"],
+    key="phishing_email_screenshot"
+)
 
-    if not email_input.strip():
-        st.warning("Please enter an email address.")
+if email_screenshot is not None:
+    try:
+        screenshot = Image.open(email_screenshot).convert("RGB")
 
-    else:
-        with st.spinner("Checking email format and domain..."):
+        st.subheader("Uploaded Screenshot")
+        st.image(
+            screenshot,
+            caption="Email screenshot for analysis",
+            use_container_width=True
+        )
 
-            try:
-                email_result = check_email(email_input)
+        if st.button(
+            "🔎 Analyze Phishing Risk",
+            key="analyze_phishing_screenshot"
+        ):
+            with st.spinner("Extracting text and analyzing warning signs..."):
+                email_text = extract_email_text(screenshot)
 
-                st.subheader("Email Check Results")
+            if not email_text:
+                st.error(
+                    "No readable text was detected. Try a clearer screenshot."
+                )
+            else:
+                features = analyze_phishing_features(email_text)
+                pri = calculate_pri(features)
+                category = classify_pri(pri)
 
-                st.write("**Email:**", email_result["email"])
+                st.subheader("📊 Phishing Risk Results")
 
-                if email_result["status"] == "Invalid format":
-                    st.error("❌ Invalid email format")
+                col1, col2 = st.columns(2)
 
-                elif email_result["status"] == "Likely legitimate":
-                    st.success("✅ Likely legitimate domain configuration")
+                with col1:
+                    st.metric("Phishing Risk Index", f"{pri}/100")
 
-                elif email_result["status"] == "Potentially suspicious":
-                    st.warning("⚠️ Potentially suspicious — further verification needed")
+                with col2:
+                    st.metric("Screening Category", category)
 
-                else:
-                    st.info("ℹ️ Unable to verify")
+                st.progress(int(pri))
 
-                st.write(
-                    "**Format valid:**",
-                    "Yes" if email_result["format_valid"] else "No"
+                st.caption(
+                    "The score is a heuristic screening index, "
+                    "not the probability that the email is a scam."
                 )
 
-                if email_result["domain"]:
-                    st.write("**Domain:**", email_result["domain"])
-
-                if email_result["format_valid"]:
-                    st.write(
-                        "**MX record confirmed:**",
-                        "Yes" if email_result["has_mx_record"] else "No"
+                if category == "LOWER RISK":
+                    st.success(
+                        "Fewer of the selected warning signs were detected. "
+                        "This does not establish that the email is legitimate."
+                    )
+                elif category == "NEEDS REVIEW":
+                    st.warning(
+                        "Some warning signs were detected. Verify the sender "
+                        "through an official channel before taking action."
+                    )
+                else:
+                    st.error(
+                        "Multiple or strongly weighted warning indicators "
+                        "were detected. Do not click links or provide "
+                        "passwords, OTPs, or financial information until verified."
                     )
 
-                for detail in email_result["details"]:
-                    st.write("•", detail)
+                # ------------------------------------------
+                # FEATURE BREAKDOWN
+                # ------------------------------------------
 
-            except Exception as error:
-                st.error("The email check could not be completed.")
-                st.caption(str(error))
+                st.subheader("🧮 Mathematical Feature Breakdown")
+
+                breakdown = [
+                    ("Urgency wording", features["urgency"], 0.20),
+                    ("Credential-related wording", features["credentials"], 0.25),
+                    ("Visible URL detected", features["link_present"], 0.15),
+                    ("Threat-related wording", features["threat"], 0.20),
+                    ("Money or reward wording", features["money"], 0.10),
+                    ("URL count score", features["url_count_score"], 0.10),
+                ]
+
+                for name, value, weight in breakdown:
+                    contribution = 100 * weight * value
+
+                    st.write(
+                        f"**{name}:** {value:.2f} "
+                        f"× {weight:.2f} × 100 "
+                        f"= {contribution:.2f} points"
+                    )
+
+                st.code(
+                    "PRI = 100 × ("
+                    "0.20U + 0.25C + 0.15L + "
+                    "0.20T + 0.10M + 0.10N)"
+                )
+
+                # ------------------------------------------
+                # DETECTED URLS
+                # ------------------------------------------
+
+                st.subheader("🔗 Visible Links")
+
+                if features["urls"]:
+                    st.warning(
+                        "Review these links carefully. They were extracted "
+                        "from the screenshot and have not been opened."
+                    )
+
+                    for url in features["urls"]:
+                        st.code(url)
+                else:
+                    st.write(
+                        "No URLs matching the supported patterns were detected. "
+                        "Links in images or unusual formats may be missed."
+                    )
+
+                # ------------------------------------------
+                # MACHINE-LEARNING PREDICTION
+                # ------------------------------------------
+
+                st.subheader("🤖 Machine-Learning Assessment")
+
+                phishing_model = load_phishing_model()
+
+                if phishing_model is None:
+                    st.info(
+                        "ML prediction is currently unavailable because "
+                        "'phishing_model.pkl' was not found or could not "
+                        "be loaded. The mathematical screening result above "
+                        "was still calculated."
+                    )
+                else:
+                    # This feature order must match the model's training data.
+                    model_input = [[
+                        features["urgency"],
+                        features["credentials"],
+                        features["link_present"],
+                        features["threat"],
+                        features["money"],
+                        features["url_count_score"]
+                    ]]
+
+                    try:
+                        prediction = phishing_model.predict(model_input)[0]
+
+                        st.write("**Model classification:**", str(prediction))
+
+                        if hasattr(phishing_model, "predict_proba"):
+                            probabilities = phishing_model.predict_proba(
+                                model_input
+                            )[0]
+
+                            st.write(
+                                "**Model class scores:**",
+                                {
+                                    str(label): round(float(probability), 3)
+                                    for label, probability in zip(
+                                        phishing_model.classes_,
+                                        probabilities
+                                    )
+                                }
+                            )
+
+                            st.caption(
+                                "These are model outputs, not necessarily "
+                                "calibrated real-world probabilities. "
+                                "Validate the model on unseen labeled emails."
+                            )
+
+                    except Exception:
+                        st.error(
+                            "The phishing model could not analyze these "
+                            "features. Confirm that its training feature "
+                            "order matches the six features above."
+                        )
+
+                # ------------------------------------------
+                # EXTRACTED TEXT
+                # ------------------------------------------
+
+                with st.expander("View OCR-extracted email text"):
+                    st.text_area(
+                        "Extracted text",
+                        value=email_text,
+                        height=220,
+                        disabled=True,
+                        key="extracted_phishing_email_text"
+                    )
+
+                st.caption(
+                    "Privacy note: screenshots may contain personal data. "
+                    "Use test or redacted screenshots whenever possible."
+                )
+
+    except Exception:
+        st.error(
+            "The screenshot could not be processed. "
+            "Try uploading a valid PNG or JPG image."
+        )
+
