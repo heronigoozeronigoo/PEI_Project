@@ -1,0 +1,93 @@
+
+import pandas as pd
+import joblib
+
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import (
+    classification_report,
+    confusion_matrix
+)
+
+# Load your real labeled email dataset
+df = pd.read_csv("email_dataset.csv")
+
+# IMPORTANT:
+# Change these names to match your CSV's actual columns.
+TEXT_COLUMN = "text"
+LABEL_COLUMN = "label"
+
+df = df[[TEXT_COLUMN, LABEL_COLUMN]].dropna()
+df[TEXT_COLUMN] = df[TEXT_COLUMN].astype(str).str.strip()
+df[LABEL_COLUMN] = df[LABEL_COLUMN].astype(str).str.strip().str.lower()
+
+# Adjust these mappings to match the labels in your dataset.
+label_map = {
+    "phishing": 1,
+    "phish": 1,
+    "1": 1,
+    "safe": 0,
+    "legitimate": 0,
+    "ham": 0,
+    "0": 0
+}
+
+df[LABEL_COLUMN] = df[LABEL_COLUMN].map(label_map)
+df = df.dropna()
+df = df[df[TEXT_COLUMN] != ""]
+df = df.drop_duplicates(subset=[TEXT_COLUMN])
+
+if df[LABEL_COLUMN].nunique() != 2:
+    raise ValueError(
+        "The dataset must contain both phishing and safe emails. "
+        "Check your column names and label mapping."
+    )
+
+X = df[TEXT_COLUMN]
+y = df[LABEL_COLUMN].astype(int)
+
+# Keep unseen data for evaluation
+X_train, X_test, y_train, y_test = train_test_split(
+    X,
+    y,
+    test_size=0.20,
+    random_state=42,
+    stratify=y
+)
+
+# Train a text-based phishing classifier
+model = Pipeline([
+    ("tfidf", TfidfVectorizer(
+        lowercase=True,
+        ngram_range=(1, 2),
+        max_features=20000,
+        sublinear_tf=True
+    )),
+    ("classifier", LogisticRegression(
+        max_iter=1000,
+        class_weight="balanced"
+    ))
+])
+
+model.fit(X_train, y_train)
+
+# Evaluate on held-out data
+predictions = model.predict(X_test)
+
+print("Confusion matrix:")
+print(confusion_matrix(y_test, predictions))
+
+print("\nClassification report:")
+print(classification_report(
+    y_test,
+    predictions,
+    target_names=["Safe", "Phishing"],
+    zero_division=0
+))
+
+# Save the trained model
+joblib.dump(model, "phishing_model.pkl")
+
+print("\nSaved trained model as phishing_model.pkl")
