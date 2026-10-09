@@ -118,7 +118,7 @@ st.title(
 )
 
 st.write(
-    "AI-Based Detection, Mathematical PEI, "
+    "Machine Learning-Assisted Detection, Mathematical PEI, "
     "and Machine Learning Privacy Classification"
 )
 
