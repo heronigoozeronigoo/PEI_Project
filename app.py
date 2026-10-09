@@ -943,3 +943,71 @@ if uploaded_file is not None:
             st.code(
                 results["text"]
             )
+
+# ==========================================================
+# STEP 6 — EMAIL AUTHENTICITY CHECKER
+# ==========================================================
+
+st.divider()
+
+st.header("📧 Email Authenticity Checker")
+
+st.write(
+    "Check an email address's format and domain mail-server "
+    "configuration. This does not guarantee that the mailbox "
+    "exists or that the sender is trustworthy."
+)
+
+email_input = st.text_input(
+    "Enter an email address",
+    placeholder="example@domain.com",
+    key="email_authenticity_input"
+)
+
+if st.button("🔎 Check Email", key="check_email_button"):
+
+    if not email_input.strip():
+        st.warning("Please enter an email address.")
+
+    else:
+        with st.spinner("Checking email format and domain..."):
+
+            try:
+                email_result = check_email(email_input)
+
+                st.subheader("Email Check Results")
+
+                st.write("**Email:**", email_result["email"])
+
+                if email_result["status"] == "Invalid format":
+                    st.error("❌ Invalid email format")
+
+                elif email_result["status"] == "Likely legitimate":
+                    st.success("✅ Likely legitimate domain configuration")
+
+                elif email_result["status"] == "Potentially suspicious":
+                    st.warning("⚠️ Potentially suspicious — further verification needed")
+
+                else:
+                    st.info("ℹ️ Unable to verify")
+
+                st.write(
+                    "**Format valid:**",
+                    "Yes" if email_result["format_valid"] else "No"
+                )
+
+                if email_result["domain"]:
+                    st.write("**Domain:**", email_result["domain"])
+
+                if email_result["format_valid"]:
+                    st.write(
+                        "**MX record confirmed:**",
+                        "Yes" if email_result["has_mx_record"] else "No"
+                    )
+
+                for detail in email_result["details"]:
+                    st.write("•", detail)
+
+            except Exception as error:
+                st.error("The email check could not be completed.")
+                st.caption(str(error))
