@@ -1,5 +1,7 @@
+
 import os
 import re
+import shutil
 import cv2
 import numpy as np
 import pytesseract
@@ -7,17 +9,21 @@ import pytesseract
 from PIL import Image, ImageOps, ImageEnhance, ImageFilter
 
 
+
 # ==========================================================
 # TESSERACT SETUP
 # ==========================================================
 
-TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+TESSERACT_PATH = shutil.which("tesseract")
 
-if not os.path.exists(TESSERACT_PATH):
+if TESSERACT_PATH is None:
+    windows_path = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.exists(windows_path):
+        TESSERACT_PATH = windows_path
+
+if TESSERACT_PATH is None:
     raise FileNotFoundError(
-        "Tesseract was not found here:\n"
-        + TESSERACT_PATH
-        + "\n\nCheck that Tesseract OCR is installed."
+        "Tesseract OCR is not installed or could not be found."
     )
 
 pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
