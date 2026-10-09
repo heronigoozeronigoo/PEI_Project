@@ -119,7 +119,7 @@ st.title(
 
 st.write(
     "Machine Learning-Assisted Detection, Mathematical PEI, "
-    "and Machine Privacy Classification"
+    "and Privacy Classification"
 )
 
 st.divider()
