@@ -44,7 +44,7 @@ st.markdown("""
 <div class="hero">
   <div class="eyebrow">SENTINEL · DIGITAL SAFETY LAB</div>
   <h1>See the risk before you share.</h1>
-  <p>Scan screenshots for personal information and inspect email screenshots for possible phishing signals. This is a research prototype, not a guarantee of safety.</p>
+  <p>Scan screenshots for personal information, calculate a Mathematical Privacy Exposure Index (PEI), and inspect email screenshots for possible phishing signals.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -160,8 +160,6 @@ def phishing_prediction(text):
     return label, None, "basic text heuristic (no trained model loaded)"
 
 
-st.caption("Prototype notice: PEI is a research score based on selected weights and image ratings. It is not a certified risk standard. Avoid uploading screenshots containing real passwords, private messages, or other sensitive data.")
-
 privacy_tab, phishing_tab = st.tabs(["🔎 Privacy Exposure Scanner", "✉️ Phishing Email Screenshot"])
 
 with privacy_tab:
@@ -242,11 +240,34 @@ with phishing_tab:
                     st.caption(f"Analysis method: {method}.")
                     if probability is not None:
                         st.metric("Model phishing probability", f"{probability * 100:.1f}%")
-                    st.warning("This result is only a screening aid. Do not click links or provide credentials based only on this prediction; verify suspicious messages through the organization’s official channel.")
                 elif not email_text:
                     st.info("No readable text was extracted. Try a clearer image or a closer crop of the email body.")
         except Exception as exc:
             st.error(f"Could not open this image: {exc}")
+
+with st.expander("Mathematical Formula & Validation", expanded=True):
+    st.markdown("### 1. PEI formula")
+    st.latex(r"E_i = w_i \times A_i \times V_i \times C_i")
+    st.markdown("Where:")
+    st.markdown("- **$w_i$** = sensitivity weight of the detected information type")
+    st.markdown("- **$A_i$** = relative area (0–1)")
+    st.markdown("- **$V_i$** = visibility/readability (0–1)")
+    st.markdown("- **$C_i$** = detection confidence (0–1)")
+    st.latex(r"E_{total} = \sum_{i=1}^{n} E_i")
+    st.latex(r"PEI = \min\left(100, \frac{100 \times E_{total}}{R_{max}}\right)")
+    st.markdown(f"For the current implementation, **$R_{{max}} = {R_MAX:.2f}$**. Weights: " + ", ".join(f"{k} = {v:.2f}" for k, v in WEIGHTS.items()) + ".")
+    st.markdown("**Current score bands:** LOW = 0–33.33, MODERATE = above 33.33–66.67, HIGH = above 66.67–100.")
+
+    st.markdown("### 2. How to validate the PEI model")
+    st.write("The formula produces a score from the selected weights and ratings. To validate whether the score reflects real exposure, compare it against independent human ratings for a labeled set of screenshots.")
+    st.markdown("1. Prepare a test set of screenshots with consent and remove real private information.")
+    st.markdown("2. Have at least two reviewers independently rate each screenshot's exposure level using the same LOW/MODERATE/HIGH rubric.")
+    st.markdown("3. Calculate PEI for every screenshot without changing the weights after seeing the test labels.")
+    st.markdown("4. Compare PEI bands with reviewer labels using **confusion matrix, accuracy, precision, recall, and F1-score**. If reviewers provide numeric scores, also report **MAE** and **Spearman correlation**.")
+    st.markdown("5. Report the sample size, class distribution, disagreements between reviewers, and all metrics. Do not claim validation results until these tests have actually been run.")
+
+    st.markdown("### 3. How to validate phishing detection")
+    st.write("Test the phishing model on a separate labeled dataset that was not used for training. Report confusion matrix, precision, recall, F1-score, and false-positive/false-negative counts. Keep the test set separate from training data to avoid data leakage.")
 
 with st.expander("System status / troubleshooting"):
     st.write(f"OCR library available: **{'Yes' if pytesseract is not None else 'No'}**")
