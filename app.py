@@ -1215,7 +1215,7 @@ if email_screenshot is not None:
                         "Links in images or unusual formats may be missed."
                     )
 
-               ```python
+    
                # ------------------------------------------
                 # MACHINE-LEARNING PREDICTION
                 # ------------------------------------------
