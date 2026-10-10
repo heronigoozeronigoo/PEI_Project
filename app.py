@@ -19,8 +19,8 @@ PEI_MODEL_PATH = BASE_DIR / "pei_model.pkl"
 PHISHING_MODEL_PATH = BASE_DIR / "phishing_model.pkl"
 
 st.set_page_config(
-    page_title="Privacy Exposure & Phishing Checker",
-    page_icon="🔐",
+    page_title="Sentinel | Privacy & Phishing Lab",
+    page_icon="🛡️",
     layout="wide",
 )
 
@@ -88,67 +88,6 @@ def classify_pei(pei):
     return "HIGH"
 
 
-def get_email_authenticity(email_address):
-    """Check email syntax and whether its domain publishes an MX record.
-
-    An MX record only indicates mail-server configuration; it does not
-    confirm that a mailbox exists or that a sender is trustworthy.
-    """
-    email_address = email_address.strip()
-    pattern = r"^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$"
-    format_valid = bool(re.fullmatch(pattern, email_address))
-
-    result = {
-        "email": email_address,
-        "format_valid": format_valid,
-        "domain": "",
-        "has_mx_record": False,
-        "status": "Invalid format",
-        "details": [],
-    }
-
-    if not format_valid:
-        result["details"].append("The address does not match the expected email format.")
-        return result
-
-    domain = email_address.rsplit("@", 1)[1].lower()
-    result["domain"] = domain
-
-    try:
-        # dnspython is optional. If present, use it to query MX records.
-        import dns.resolver  # type: ignore
-
-        answers = dns.resolver.resolve(domain, "MX", lifetime=4)
-        result["has_mx_record"] = len(answers) > 0
-    except ImportError:
-        # A fallback DNS lookup does not reliably prove an MX record exists.
-        try:
-            socket.getaddrinfo(domain, 25, type=socket.SOCK_STREAM)
-            result["details"].append(
-                "The domain resolved, but MX records were not directly checked. "
-                "Install dnspython for an MX-record check."
-            )
-        except Exception:
-            result["details"].append("The domain could not be resolved with the available DNS check.")
-        result["status"] = "Unable to verify"
-        return result
-    except Exception:
-        result["has_mx_record"] = False
-
-    if result["has_mx_record"]:
-        result["status"] = "Likely legitimate"
-        result["details"].append("The domain publishes an MX record.")
-    else:
-        result["status"] = "Potentially suspicious"
-        result["details"].append(
-            "No MX record was confirmed. This alone does not prove the address is fraudulent."
-        )
-
-    result["details"].append(
-        "This check does not confirm that the mailbox exists or that the sender is trustworthy."
-    )
-    return result
-
 
 def extract_screenshot_text(image):
     """Extract readable text from an uploaded screenshot using Tesseract OCR."""
@@ -179,20 +118,52 @@ def predict_phishing(email_text, model):
 
 
 # ==========================================================
+# VISUAL DESIGN
+# ==========================================================
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+:root { --ink:#e8eefc; --muted:#9eacc7; --line:rgba(148,163,184,.20); }
+.stApp { background: radial-gradient(ellipse at 15% 0%, rgba(37,99,235,.18), transparent 34%), radial-gradient(ellipse at 95% 12%, rgba(13,148,136,.13), transparent 30%), #080d18; color:var(--ink); font-family:'DM Sans',sans-serif; }
+[data-testid="stHeader"] { background:rgba(8,13,24,.78); }
+.block-container { max-width: 1220px; padding-top: 2rem; padding-bottom: 3rem; }
+h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.035em; }
+h1 { color:#f8fbff; }
+p, label, .stCaption { color:#b8c5dc; }
+[data-testid="stMetric"] { background:linear-gradient(145deg,rgba(24,36,58,.88),rgba(13,21,36,.92)); border:1px solid var(--line); padding:17px 18px; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.14); }
+[data-testid="stMetricLabel"] { color:#9eacc7 !important; }
+[data-testid="stMetricValue"] { color:#f5f8ff !important; }
+[data-testid="stFileUploader"] { background:rgba(20,31,51,.65); border:1px dashed rgba(96,165,250,.55); border-radius:18px; padding:12px; }
+.stButton > button { border-radius:12px; min-height:46px; font-weight:700; border:1px solid rgba(96,165,250,.45); background:linear-gradient(100deg,#2563eb,#0f9f9a); color:white; transition:transform .15s ease, filter .15s ease; }
+.stButton > button:hover { filter:brightness(1.12); transform:translateY(-1px); border-color:#7dd3fc; color:white; }
+[data-testid="stExpander"] { border:1px solid var(--line); border-radius:14px; background:rgba(15,23,42,.48); }
+[data-baseweb="tab-list"] { gap:8px; }
+[data-baseweb="tab"] { border-radius:10px; padding:10px 18px; }
+hr { border-color:var(--line); }
+.hero { padding:28px 30px; border-radius:24px; background:linear-gradient(120deg,rgba(30,64,175,.35),rgba(15,118,110,.22)),rgba(15,23,42,.82); border:1px solid rgba(125,211,252,.22); margin-bottom:20px; box-shadow:0 20px 60px rgba(0,0,0,.18); }
+.eyebrow { color:#7dd3fc; font-size:.76rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
+.hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3.2rem); line-height:1.06; font-weight:700; color:#f8fbff; margin:.5rem 0 .8rem; }
+.hero-copy { max-width:760px; color:#b9c8df; font-size:1rem; line-height:1.7; }
+.pill { display:inline-block; padding:6px 10px; margin:4px 5px 0 0; border:1px solid rgba(125,211,252,.25); border-radius:999px; color:#dbeafe; background:rgba(15,23,42,.45); font-size:.78rem; }
+.section-note { color:#9eacc7; margin-top:-.4rem; margin-bottom:1rem; }
+[data-testid="stAlert"] { border-radius:14px; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==========================================================
 # PAGE HEADER
 # ==========================================================
 
-st.title("🔐 Mathematical Privacy Exposure Index")
-st.write(
-    "Screenshot-based sensitive-information detection, mathematical PEI "
-    "calculation, PEI machine learning, and phishing-email text classification."
-)
-st.caption(
-    "Research prototype: results depend on detection quality, model training data, "
-    "and validation. Do not treat a prediction as a guarantee of safety."
-)
+st.markdown("""
+<div class="hero">
+  <div class="eyebrow">SENTINEL • DIGITAL SAFETY LAB</div>
+  <div class="hero-title">See the risk before you share.</div>
+  <div class="hero-copy">A research prototype that helps you inspect screenshots for exposed personal information and screen email screenshots for possible phishing signals.</div>
+  <div style="margin-top:14px"><span class="pill">◈ Mathematical PEI</span><span class="pill">◈ AI-assisted detection</span><span class="pill">◈ Email threat screening</span></div>
+</div>
+""", unsafe_allow_html=True)
 
-with st.expander("⚙️ System Status", expanded=True):
+with st.expander("⚙️ System Status · model availability", expanded=False):
     status1, status2, status3 = st.columns(3)
     with status1:
         st.success("Sensitive-information detector imported")
@@ -215,7 +186,8 @@ with st.expander("⚙️ System Status", expanded=True):
 # ==========================================================
 
 st.divider()
-st.header("1. Screenshot Privacy Exposure Analysis")
+st.header("Screenshot Privacy Scanner")
+st.caption("Upload an image to find visible emails, phone numbers, URLs, and QR codes, then calculate a privacy exposure score.")
 
 uploaded_file = st.file_uploader(
     "Upload a screenshot for privacy analysis",
@@ -407,59 +379,14 @@ if uploaded_file is not None:
                     st.code(ocr_text or "The detector did not return OCR text.")
 
 
-# ==========================================================
-# SECTION 2 — EMAIL ADDRESS CHECK
-# ==========================================================
-
-st.divider()
-st.header("5. Email Address Format and Domain Check")
-st.write(
-    "This checks the email format and, when the optional `dnspython` package is installed, "
-    "whether the domain publishes an MX record. It cannot prove that the mailbox exists "
-    "or that a message is trustworthy."
-)
-
-email_address = st.text_input(
-    "Enter an email address",
-    placeholder="example@domain.com",
-    key="email_authenticity_input",
-)
-if st.button("🔎 Check Email Address", key="check_email_address_button"):
-    if not email_address.strip():
-        st.warning("Please enter an email address.")
-    else:
-        with st.spinner("Checking email format and domain configuration..."):
-            email_result = get_email_authenticity(email_address)
-
-        st.write("**Email:**", email_result["email"])
-        st.write("**Format valid:**", "Yes" if email_result["format_valid"] else "No")
-        if email_result["domain"]:
-            st.write("**Domain:**", email_result["domain"])
-
-        if email_result["status"] == "Invalid format":
-            st.error("❌ Invalid email format")
-        elif email_result["status"] == "Likely legitimate":
-            st.success("✅ Domain MX record found; mailbox and sender are not verified.")
-        elif email_result["status"] == "Potentially suspicious":
-            st.warning("⚠️ No MX record was confirmed; this alone does not prove fraud.")
-        else:
-            st.info("ℹ️ Unable to verify MX configuration with the current environment.")
-
-        if email_result["format_valid"] and email_result["status"] != "Unable to verify":
-            st.write(
-                "**MX record confirmed:**",
-                "Yes" if email_result["has_mx_record"] else "No",
-            )
-        for detail in email_result["details"]:
-            st.write("•", detail)
-
 
 # ==========================================================
-# SECTION 3 — SCREENSHOT PHISHING EMAIL CHECKER
+# SECTION 2 — SCREENSHOT PHISHING EMAIL CHECKER
 # ==========================================================
 
 st.divider()
-st.header("6. Screenshot-Based Phishing Email Checker")
+st.header("Email Threat Scanner")
+st.caption("Upload a screenshot of a suspicious email. OCR extracts its text, and the phishing model evaluates that text for warning patterns.")
 st.write(
     "Upload a screenshot of an email. The app extracts visible text with OCR, then passes "
     "that text to `phishing_model.pkl`. The model was trained on email text, not image pixels."
@@ -544,4 +471,3 @@ st.divider()
 st.caption(
     "Research prototype only. Validate the detector, PEI thresholds, model performance, "
     "and OCR pipeline on appropriate independent test data before making research claims."
-)
