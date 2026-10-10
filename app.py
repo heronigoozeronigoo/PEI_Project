@@ -112,7 +112,15 @@ def find_sensitive(text, qr_data=None):
 
 
 def calculate_pei(found, area, visibility, confidence):
-    raw = sum(WEIGHTS[kind] * area * visibility * confidence for kind, _ in found)
+    """Score every distinct detected item and normalize the raw total."""
+    raw = 0.0
+    item_count = 0
+    for kind, values in found:
+        weight = WEIGHTS.get(kind, 0.0)
+        for _value in values:
+            raw += weight * area * visibility * confidence
+            item_count += 1
+
     score = min(100.0, max(0.0, 100.0 * raw / R_MAX))
     if score <= 33.33:
         level = "LOW"
@@ -120,7 +128,7 @@ def calculate_pei(found, area, visibility, confidence):
         level = "MODERATE"
     else:
         level = "HIGH"
-    return raw, score, level
+    return raw, score, level, item_count
 
 
 def phishing_prediction(text):
@@ -192,11 +200,11 @@ with privacy_tab:
                     qr_data = read_qr(image)
                 if extracted is not None:
                     found = find_sensitive(extracted, qr_data)
-                    raw, pei, level = calculate_pei(found, area, visibility, confidence)
+                    raw, pei, level, item_count = calculate_pei(found, area, visibility, confidence)
                     m1, m2, m3 = st.columns(3)
                     m1.metric("PEI score", f"{pei:.2f} / 100")
                     m2.metric("Exposure level", level)
-                    m3.metric("Detected categories", str(len(found)))
+                    m3.metric("Detected items", str(item_count))
                     if found:
                         st.subheader("Detected information")
                         for kind, values in found:
@@ -207,7 +215,14 @@ with privacy_tab:
                         st.info("No email, phone-number, URL, or QR-code content was detected. OCR may miss information in blurry or stylized screenshots.")
                     if pei_model is not None:
                         try:
-                            features = [[sum(k == "Email" for k, _ in found), sum(k == "Phone" for k, _ in found), sum(k == "URL" for k, _ in found), sum(k == "QR Code" for k, _ in found), raw, pei]]
+                            features = [[
+                                sum(len(values) for kind, values in found if kind == "Email"),
+                                sum(len(values) for kind, values in found if kind == "Phone"),
+                                sum(len(values) for kind, values in found if kind == "URL"),
+                                sum(len(values) for kind, values in found if kind == "QR Code"),
+                                raw,
+                                pei,
+                            ]]
                             model_result = pei_model.predict(features)[0]
                             st.write(f"**PEI model output:** `{model_result}`")
                         except Exception as exc:
@@ -293,7 +308,8 @@ with st.expander("Mathematical Formula & Validation", expanded=True):
     st.markdown("- **$C_i$** = detection confidence (0–1)")
     st.latex(r"E_{total} = \sum_{i=1}^{n} E_i")
     st.latex(r"PEI = \min\left(100, \frac{100 \times E_{total}}{R_{max}}\right)")
-    st.markdown(f"For the current implementation, **$R_{{max}} = {R_MAX:.2f}$**. Weights: " + ", ".join(f"{k} = {v:.2f}" for k, v in WEIGHTS.items()) + ".")
+    st.markdown(f"For the current implementation, **$R_{{max}} = {R_MAX:.2f}$**. The score is capped at 100. Weights: " + ", ".join(f"{k} = {v:.2f}" for k, v in WEIGHTS.items()) + ".")
+    st.caption("R_MAX = 0.60 is a reference normalization constant, not an empirically validated maximum. Multiple detected items can push the score to 100.")
     st.markdown("**Current score bands:** LOW = 0–33.33, MODERATE = above 33.33–66.67, HIGH = above 66.67–100.")
 
     st.markdown("### 2. How to validate the PEI model")
