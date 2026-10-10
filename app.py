@@ -1215,7 +1215,8 @@ if email_screenshot is not None:
                         "Links in images or unusual formats may be missed."
                     )
 
-                # ------------------------------------------
+               ```python
+               # ------------------------------------------
                 # MACHINE-LEARNING PREDICTION
                 # ------------------------------------------
 
@@ -1224,78 +1225,57 @@ if email_screenshot is not None:
                 phishing_model = load_phishing_model()
 
                 if phishing_model is None:
-                    st.info(
-                        "ML prediction is currently unavailable because "
-                        "'phishing_model.pkl' was not found or could not "
-                        "be loaded. The mathematical screening result above "
-                        "was still calculated."
+                    st.warning(
+                        "Phishing model could not be loaded. "
+                        "Check that phishing_model.pkl exists."
                     )
                 else:
-                    # This feature order must match the model's training data.
-                    model_input = [[
-                        features["urgency"],
-                        features["credentials"],
-                        features["link_present"],
-                        features["threat"],
-                        features["money"],
-                        features["url_count_score"]
-                    ]]
-
                     try:
-                        prediction = phishing_model.predict(model_input)[0]
-
-                        st.write("**Model classification:**", str(prediction))
-
-                        if hasattr(phishing_model, "predict_proba"):
-                            probabilities = phishing_model.predict_proba(
-                                model_input
-                            )[0]
-
-                            st.write(
-                                "**Model class scores:**",
-                                {
-                                    str(label): round(float(probability), 3)
-                                    for label, probability in zip(
-                                        phishing_model.classes_,
-                                        probabilities
-                                    )
-                                }
-                            )
-
-                            st.caption(
-                                "These are model outputs, not necessarily "
-                                "calibrated real-world probabilities. "
-                                "Validate the model on unseen labeled emails."
-                            )
-
-                    except Exception:
-                        st.error(
-                            "The phishing model could not analyze these "
-                            "features. Confirm that its training feature "
-                            "order matches the six features above."
+                        # The model expects raw email text.
+                        prediction = int(
+                            phishing_model.predict([email_text])[0]
                         )
 
+                        if prediction == 1:
+                            st.error(
+                                "Model classification: Potentially phishing"
+                            )
+                        elif prediction == 0:
+                            st.success(
+                                "Model classification: Likely legitimate"
+                            )
+                        else:
+                            st.warning(
+                                f"Unexpected prediction: {prediction}"
+                            )
+
+                        # Display the model's phishing-class score.
+                        if hasattr(phishing_model, "predict_proba"):
+                            probabilities = (
+                                phishing_model.predict_proba([email_text])[0]
+                            )
+                            classes = list(phishing_model.classes_)
+
+                            if 1 in classes:
+                                score = float(
+                                    probabilities[classes.index(1)]
+                                )
+
+                                st.metric(
+                                    "Phishing Model Score",
+                                    f"{score * 100:.1f}%"
+                                )
+
+                                st.caption(
+                                    "This score is not a guarantee of real-world "
+                                    "phishing probability. Verify suspicious "
+                                    "emails through official channels."
+                                )
+
+                    except Exception as error:
+                        st.error(
+                            "The phishing model could not analyze the email text."
+                        )
+                        st.code(str(error))
+
                 # ------------------------------------------
-                # EXTRACTED TEXT
-                # ------------------------------------------
-
-                with st.expander("View OCR-extracted email text"):
-                    st.text_area(
-                        "Extracted text",
-                        value=email_text,
-                        height=220,
-                        disabled=True,
-                        key="extracted_phishing_email_text"
-                    )
-
-                st.caption(
-                    "Privacy note: screenshots may contain personal data. "
-                    "Use test or redacted screenshots whenever possible."
-                )
-
-    except Exception:
-        st.error(
-            "The screenshot could not be processed. "
-            "Try uploading a valid PNG or JPG image."
-        )
-
