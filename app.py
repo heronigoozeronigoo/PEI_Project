@@ -32,11 +32,15 @@ st.markdown("""
 <style>
 .stApp {background: linear-gradient(135deg,#07111f 0%,#101b2e 55%,#071a20 100%); color:#edf4ff;}
 .block-container {max-width:1150px;padding-top:2rem;padding-bottom:3rem;}
-.hero {padding:28px;border:1px solid #29445f;border-radius:22px;background:linear-gradient(110deg,#142a49,#103b3b);margin-bottom:22px;}
+.hero {padding:30px;border:1px solid #29445f;border-radius:22px;background:linear-gradient(110deg,#142a49,#103b3b);margin-bottom:22px;box-shadow:0 12px 34px rgba(0,0,0,.18);}
 .eyebrow {color:#7dd3fc;font-size:.78rem;letter-spacing:.15em;font-weight:800;}
 .hero h1 {color:#fff;font-size:2.5rem;margin:.45rem 0;}
 .hero p {color:#c4d4e8;max-width:760px;line-height:1.6;}
 [data-testid="stMetric"] {background:#132238;border:1px solid #2b405a;border-radius:14px;padding:14px;}
+section[data-testid="stSidebar"] {background:#0b1627;}
+div[data-testid="stExpander"] {border:1px solid #2b405a;border-radius:14px;}
+.result-card {padding:18px;border:1px solid #2b405a;border-radius:16px;background:#101e31;margin:10px 0;}
+.small-label {color:#7dd3fc;text-transform:uppercase;letter-spacing:.12em;font-size:.75rem;font-weight:800;}
 [data-testid="stFileUploader"] {background:#101e31;border:1px dashed #426485;border-radius:14px;padding:12px;}
 .stButton>button {border-radius:10px;background:#167d89;color:white;border:0;font-weight:700;min-height:42px;}
 .stButton>button:hover {background:#2099a5;color:white;}
@@ -214,7 +218,13 @@ with privacy_tab:
 
 with phishing_tab:
     st.header("Email Screenshot Threat Checker")
-    st.write("Upload an email screenshot. The app uses OCR, then checks the extracted text with your trained model if available.")
+    st.write("Turn an email screenshot into readable text, evaluate phishing indicators, and review the mathematical logic behind the result.")
+    st.markdown("""
+    <div class="result-card">
+      <div class="small-label">Analysis workflow</div>
+      <div style="font-size:1.03rem;color:#edf4ff;margin-top:8px;">Screenshot → OCR text extraction → trained classifier or transparent fallback rules → risk interpretation</div>
+    </div>
+    """, unsafe_allow_html=True)
     email_file = st.file_uploader("Upload email screenshot", type=["png", "jpg", "jpeg", "webp"], key="email_upload")
     if email_file:
         try:
@@ -240,6 +250,34 @@ with phishing_tab:
                     st.caption(f"Analysis method: {method}.")
                     if probability is not None:
                         st.metric("Model phishing probability", f"{probability * 100:.1f}%")
+                        st.progress(max(0.0, min(1.0, probability)))
+                    elif "heuristic" in method:
+                        lower_text = email_text.lower()
+                        signal_tests = {
+                            "Urgency or threat": any(x in lower_text for x in ["urgent", "immediately", "suspended", "will be closed", "act now"]),
+                            "Credential or payment request": any(x in lower_text for x in ["password", "verify your account", "credit card", "bank details", "payment information"]),
+                            "Shortened or unusual link pattern": any(x in lower_text for x in ["bit.ly/", "tinyurl.com/", "login-", "secure-"]),
+                            "Unexpected prize or reward": any(x in lower_text for x in ["you won", "claim your prize", "free gift", "winner"]),
+                        }
+                        hits = sum(signal_tests.values())
+                        risk_score = hits / len(signal_tests) * 100
+                        c1, c2 = st.columns(2)
+                        c1.metric("Rule-based signal score", f"{risk_score:.0f}%")
+                        c2.metric("Signals matched", f"{hits} / {len(signal_tests)}")
+                        st.progress(risk_score / 100)
+                        st.write("**Matched warning signals**")
+                        for signal, matched in signal_tests.items():
+                            st.write(("✓" if matched else "—") + " " + signal)
+                    with st.expander("Phishing formula and decision logic", expanded=True):
+                        st.markdown("**A. When the trained model is available**")
+                        st.latex(r"x = \operatorname{TFIDF}(T)")
+                        st.latex(r"\hat{y} = f_{\theta}(x)")
+                        st.markdown("Here, $T$ is the OCR-extracted email text, TF-IDF converts text into numeric features, and $f_\theta$ is the classifier learned during training. If the model supports calibrated class probabilities, the displayed probability is the model's estimated phishing-class probability—not a guarantee that the email is malicious.")
+                        st.markdown("**B. If no trained model is loaded: transparent rule-based score**")
+                        st.latex(r"S = \frac{H}{N} \times 100")
+                        st.markdown("$H$ = number of matched warning-signal groups; $N$ = total warning-signal groups checked (currently 4). The fallback labels 0 matched signals as ‘No common warning signs found,’ 1 as ‘Use caution,’ and 2 or more as ‘Suspicious signs detected.’ This is a simple heuristic score, not a trained-model probability.")
+                        st.markdown("**C. Validation plan**")
+                        st.write("Evaluate on a separate, labeled email dataset that was not used for training. Report a confusion matrix, precision, recall, F1-score, accuracy, and false-positive/false-negative counts. For probability outputs, also assess calibration. Review errors and avoid tuning the model on the final test set.")
                 elif not email_text:
                     st.info("No readable text was extracted. Try a clearer image or a closer crop of the email body.")
         except Exception as exc:
