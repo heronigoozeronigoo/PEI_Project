@@ -1,0 +1,25 @@
+{
+    "dataset": "phishing_legit_dataset_KD_10000.csv",
+    "cleaned_rows": 9956,
+    "training_rows": 7964,
+    "testing_rows": 1992,
+    "test_size": 0.2,
+    "random_state": 42,
+    "label_mapping": {
+        "0": "Legitimate",
+        "1": "Phishing"
+    },
+    "accuracy": 1.0,
+    "balanced_accuracy": 1.0,
+    "phishing_precision": 1.0,
+    "phishing_recall": 1.0,
+    "phishing_f1_score": 1.0,
+    "roc_auc": 1.0,
+    "false_positive_rate": 0.0,
+    "confusion_matrix": {
+        "true_negatives": 792,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_positives": 1200
+    }
+}
