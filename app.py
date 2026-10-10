@@ -1278,4 +1278,3 @@ if email_screenshot is not None:
                         )
                         st.code(str(error))
 
-                # ------------------------------------------
