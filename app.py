@@ -385,21 +385,12 @@ def render_phishing_result(email_text: str) -> None:
             triage = "NEEDS MANUAL REVIEW"
             triage_reason = "The model's class label alone is insufficient for a confident verdict."
 
-    st.subheader("1. Email screening result")
-    st.caption(
-        "This tool is a prototype screening aid, not a definitive email-security service. "
-        "It uses OCR-extracted text, a trained model, and separate explainable rules."
-    )
-    if triage.startswith("HIGH CONCERN"):
-        st.error(f"🔴 {triage}")
-    elif triage.startswith("NO STRONG"):
-        st.success(f"🟢 {triage}")
-    else:
-        st.warning(f"🟡 {triage}")
+    st.subheader("Email result")
+    st.write(f"**Result: {triage.title()}**")
     st.write(triage_reason)
-    st.info(
-        "Do not share passwords or one-time codes based on an email request. "
-        "When unsure, open the organization's official app or type its known website address yourself."
+    st.caption(
+        "This is a screening result based on extracted text, model output, and rule-based indicators. "
+        "It is not a definitive determination that an email is safe or phishing."
     )
 
     st.divider()
@@ -417,7 +408,7 @@ def render_phishing_result(email_text: str) -> None:
         if model_error:
             st.caption(f"Model diagnostic: {model_error}")
         elif phishing_model is None:
-            st.warning("The phishing model file was not loaded. Check the model filename and dependencies.")
+            st.caption("Phishing model file unavailable; model prediction was skipped.")
 
     st.divider()
     st.subheader("3. Explainable rule-based indicator score")
@@ -449,7 +440,7 @@ def render_phishing_result(email_text: str) -> None:
     if analysis["suspicious_sentences"]:
         st.write("These OCR-extracted sentences matched selected warning terms or contained a URL with a suspicious pattern:")
         for item in analysis["suspicious_sentences"]:
-            st.warning(f"“{item['sentence']}”\n\n**Signals:** {', '.join(item['reasons'])}")
+            st.write(f"**Matched text:** “{item['sentence']}”  \n**Detected signals:** {', '.join(item['reasons'])}")
     else:
         st.info(
             "No sentence matched the current keyword rules. That does not prove the email is legitimate; "
