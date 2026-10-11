@@ -336,73 +336,78 @@ def predict_with_model(email_text: str):
 
 
 def render_phishing_result(email_text: str) -> None:
-    """Show the ML prediction as primary, plus an explainable rule score."""
+    """Present cautious triage, keeping model output separate from rule evidence."""
     analysis = get_phishing_indicators(email_text)
     model_label, model_probability, model_error = predict_with_model(email_text)
 
-    st.subheader("1. Primary classification — trained machine-learning model")
+    # Avoid calling an email phishing based on a single uncalibrated model label.
+    # The probability cutoffs and rule score are provisional screening gates,
+    # not validated probabilities or proof that a message is safe.
+    rule_score = analysis["score"]
+    if model_label is None:
+        triage = "NEEDS MANUAL REVIEW"
+        triage_reason = "The machine-learning model was unavailable, so no model-based verdict can be made."
+    elif model_probability is not None:
+        if model_probability >= 0.80 and rule_score >= 25:
+            triage = "HIGH CONCERN — VERIFY BEFORE ACTING"
+            triage_reason = "The model score is high and at least one meaningful rule-based warning signal was found."
+        elif model_probability <= 0.20 and rule_score < 25:
+            triage = "NO STRONG WARNING SIGNALS DETECTED"
+            triage_reason = "Both the model score and rule-based indicators are low; this does not guarantee the email is safe."
+        else:
+            triage = "NEEDS MANUAL REVIEW"
+            triage_reason = "The model and rule-based evidence are not strong enough to make a confident screening decision."
+    else:
+        # Some model types do not provide probabilities. A positive class label
+        # alone is not enough to display a definitive phishing verdict.
+        if model_label == "Phishing" and rule_score >= 25:
+            triage = "HIGH CONCERN — VERIFY BEFORE ACTING"
+            triage_reason = "The model predicts phishing and rule-based warning signals also appear."
+        else:
+            triage = "NEEDS MANUAL REVIEW"
+            triage_reason = "The model's class label alone is insufficient for a confident verdict."
+
+    st.subheader("1. Email screening result")
     st.caption(
-        "Your trained TF-IDF + Logistic Regression pipeline is the primary classifier. "
-        "The rule score below is a separate heuristic and does not override the model."
+        "This tool is a prototype screening aid, not a definitive email-security service. "
+        "It uses OCR-extracted text, a trained model, and separate explainable rules."
+    )
+    if triage.startswith("HIGH CONCERN"):
+        st.error(f"🔴 {triage}")
+    elif triage.startswith("NO STRONG"):
+        st.success(f"🟢 {triage}")
+    else:
+        st.warning(f"🟡 {triage}")
+    st.write(triage_reason)
+    st.info(
+        "Do not share passwords or one-time codes based on an email request. "
+        "When unsure, open the organization's official app or type its known website address yourself."
     )
 
-    if model_label == "Phishing":
-        st.markdown(
-            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
-            "border:1px solid #ef4444;border-radius:14px;background:rgba(239,68,68,.13);'>"
-            "<span style='font-size:2rem;line-height:1'>🔴</span>"
-            "<div><strong style='color:#f87171;font-size:1.2rem'>RED LIGHT · MODEL PREDICTS PHISHING</strong>"
-            "<div>Do not click links or share passwords, codes, or payment details.</div></div></div>",
-            unsafe_allow_html=True,
-        )
-    elif model_label == "Safe" and analysis["score"] >= 30:
-        st.markdown(
-            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
-            "border:1px solid #eab308;border-radius:14px;background:rgba(234,179,8,.13);'>"
-            "<span style='font-size:2rem;line-height:1'>🟡</span>"
-            "<div><strong style='color:#facc15;font-size:1.2rem'>YELLOW LIGHT · REVIEW RECOMMENDED</strong>"
-            "<div>The model predicts legitimate, but the rule-based indicators raise concerns. Verify independently.</div></div></div>",
-            unsafe_allow_html=True,
-        )
-    elif model_label == "Safe":
-        st.markdown(
-            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
-            "border:1px solid #22c55e;border-radius:14px;background:rgba(34,197,94,.12);'>"
-            "<span style='font-size:2rem;line-height:1'>🟢</span>"
-            "<div><strong style='color:#4ade80;font-size:1.2rem'>GREEN LIGHT · MODEL PREDICTS LEGITIMATE</strong>"
-            "<div>No strong conflict with the rule indicators was detected. Still check sender and links.</div></div></div>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
-            "border:1px solid #eab308;border-radius:14px;background:rgba(234,179,8,.13);'>"
-            "<span style='font-size:2rem;line-height:1'>🟡</span>"
-            "<div><strong style='color:#facc15;font-size:1.2rem'>YELLOW LIGHT · MODEL UNAVAILABLE</strong>"
-            "<div>Do not treat the rule score alone as a definitive classifier. Review the message manually.</div></div></div>",
-            unsafe_allow_html=True,
-        )
-        if model_error:
-            st.caption(f"Model error: {model_error}")
-
+    st.divider()
+    st.subheader("2. Machine-learning output")
     if model_label is not None:
-        st.metric("ML classification", model_label)
+        st.metric("Raw model class", model_label)
         if model_probability is not None:
-            st.metric("ML phishing score", f"{model_probability * 100:.1f} / 100")
+            st.metric("Model score for phishing class", f"{model_probability * 100:.1f}%")
             st.caption(
-                "This score is the model's predict_proba output for class 1 (phishing). "
-                "It is not necessarily calibrated to real-world probability."
+                "This is the model's output, not necessarily a calibrated real-world probability. "
+                "The screening result above uses a cautious review band."
             )
-    elif phishing_model is None:
-        st.warning("phishing_model.pkl was not loaded. The app cannot produce its primary ML classification.")
+    else:
+        st.caption("No model prediction was available.")
+        if model_error:
+            st.caption(f"Model diagnostic: {model_error}")
+        elif phishing_model is None:
+            st.warning("The phishing model file was not loaded. Check the model filename and dependencies.")
 
     st.divider()
-    st.subheader("2. Explainable rule-based indicator score")
+    st.subheader("3. Explainable rule-based indicator score")
     st.latex(r"S_{rules}=\min\left(100,\sum_{i=1}^{n} w_i I_i\right)")
     st.caption(
-        "Each indicator is binary (Iᵢ = 1 when detected, otherwise 0). The weights sum to 100, "
-        "so the score is the sum of triggered points. Weights are provisional and not empirically validated; "
-        "this score is not a probability and does not replace the ML classification. A URL alone is not treated as suspicious."
+        "Each indicator is binary (Iᵢ = 1 when detected, otherwise 0). The weights sum to 100. "
+        "These provisional points are not probabilities and have not yet been validated against a representative test set. "
+        "A URL by itself is not treated as suspicious."
     )
     st.markdown("**Indicators and point calculation**")
     for name, flag in analysis["flags"].items():
@@ -415,23 +420,22 @@ def render_phishing_result(email_text: str) -> None:
         language="text",
     )
     st.metric("Rule-based indicator score", f"{analysis['score']}/100")
-    st.caption(
-        f"Heuristic result: {analysis['verdict']}. This band is provisional; do not interpret it as a verified prediction."
-    )
+    st.caption(f"Rule-only band: {analysis['verdict']}. This is a provisional indicator score, not a verified verdict.")
+
     if analysis["suspicious_urls"]:
         with st.expander("Why a URL was flagged"):
             for item in analysis["suspicious_urls"]:
                 st.write(f"**{item['url']}** — " + "; ".join(item["reasons"]))
 
-    st.subheader("3. Suspicious sentence review")
+    st.subheader("4. Suspicious sentence review")
     if analysis["suspicious_sentences"]:
-        st.write("These exact OCR-extracted sentence(s) matched common warning terms or contained a visible link:")
+        st.write("These OCR-extracted sentences matched selected warning terms or contained a URL with a suspicious pattern:")
         for item in analysis["suspicious_sentences"]:
             st.warning(f"“{item['sentence']}”\n\n**Signals:** {', '.join(item['reasons'])}")
     else:
         st.info(
-            "No sentence matched the current keyword rules. The model may still detect phishing patterns, "
-            "and absence of keyword matches does not prove legitimacy."
+            "No sentence matched the current keyword rules. That does not prove the email is legitimate; "
+            "OCR can miss text and phishing messages can use other wording."
         )
 
     if analysis["urls"]:
