@@ -1,474 +1,500 @@
+"""Sentinel — screenshot privacy exposure and phishing screening research app.
+
+Run with: streamlit run app.py
+Optional local files: detector.py, pei_model.pkl, phishing_model.pkl.
+"""
 from pathlib import Path
 import re
-import socket
+from typing import Any, Dict, List, Optional, Tuple
 
-import joblib
 import streamlit as st
-import pytesseract
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
-from detector import detect_sensitive_information
+try:
+    import joblib
+except ImportError:
+    joblib = None
 
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
 
-# ==========================================================
-# PAGE SETTINGS AND MODEL PATHS
-# ==========================================================
+try:
+    from detector import detect_sensitive_information
+except Exception:
+    detect_sensitive_information = None
 
 BASE_DIR = Path(__file__).resolve().parent
 PEI_MODEL_PATH = BASE_DIR / "pei_model.pkl"
 PHISHING_MODEL_PATH = BASE_DIR / "phishing_model.pkl"
+ALLOWED_TYPES = ["png", "jpg", "jpeg"]
 
-st.set_page_config(
-    page_title="Sentinel | Privacy & Phishing Lab",
-    page_icon="🛡️",
-    layout="wide",
-)
-
-# ==========================================================
-# LOAD MODELS INDEPENDENTLY
-# ==========================================================
-
-@st.cache_resource
-def load_model(model_path: str):
-    """Load a joblib model from a path and cache it for the session."""
-    path = Path(model_path)
-    if not path.exists():
-        raise FileNotFoundError(f"{path.name} was not found in the app folder.")
-    return joblib.load(path)
-
-
-try:
-    pei_model = load_model(str(PEI_MODEL_PATH))
-    pei_model_loaded = True
-    pei_model_error = ""
-except Exception as exc:
-    pei_model = None
-    pei_model_loaded = False
-    pei_model_error = str(exc)
-
-try:
-    phishing_model = load_model(str(PHISHING_MODEL_PATH))
-    phishing_model_loaded = True
-    phishing_model_error = ""
-except Exception as exc:
-    phishing_model = None
-    phishing_model_loaded = False
-    phishing_model_error = str(exc)
-
-
-# ==========================================================
-# PEI SETTINGS
-# ==========================================================
-
-WEIGHTS = {
-    "Email": 0.15,
-    "Phone": 0.15,
-    "URL": 0.10,
-    "QR Code": 0.20,
-}
-R_MAX = 0.60
-
+# PEI weights are the research prototype's chosen sensitivity weights.
+WEIGHTS = {"Email": 0.15, "Phone": 0.15, "URL": 0.10, "QR Code": 0.20}
+R_MAX = sum(WEIGHTS.values())  # 0.60: maximum if each category saturates at its weight
 DEFAULT_AREA = 1.00
 DEFAULT_VISIBILITY = 1.00
 DEFAULT_CONFIDENCE = 0.90
 
+# Provisional phishing indicator weights. These are points, not probabilities.
+PHISHING_WEIGHTS = {
+    "Urgency / pressure": 20,
+    "Credential request": 25,
+    "Visible link": 15,
+    "Threat / consequence": 20,
+    "Money / reward bait": 10,
+    "Multiple URLs": 10,
+}
 
-def calculate_item_score(information_type, area, visibility, confidence):
-    """Calculate one sensitive item's weighted exposure score."""
-    weight = WEIGHTS[information_type]
-    return weight * area * visibility * confidence
-
-
-def classify_pei(pei):
-    """Convert a PEI score to the prototype's exposure category."""
-    if pei <= 33.33:
-        return "LOW"
-    if pei <= 66.67:
-        return "MODERATE"
-    return "HIGH"
+st.set_page_config(page_title="Sentinel | Digital Safety Lab", page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
 
 
-
-def extract_screenshot_text(image):
-    """Extract readable text from an uploaded screenshot using Tesseract OCR."""
-    return pytesseract.image_to_string(image).strip()
-
-
-def predict_phishing(email_text, model):
-    """Predict email text using the trained phishing model (0=legitimate, 1=phishing)."""
-    if not isinstance(email_text, str) or not email_text.strip():
-        raise ValueError("No readable email text was found. Try a clearer screenshot.")
-
-    prediction = int(model.predict([email_text])[0])
-    if prediction == 1:
-        label = "Potentially Phishing"
-    elif prediction == 0:
-        label = "Likely Legitimate"
-    else:
-        label = "Unknown"
-
-    score = None
-    if hasattr(model, "predict_proba") and hasattr(model, "classes_"):
-        probabilities = model.predict_proba([email_text])[0]
-        classes = list(model.classes_)
-        if 1 in classes:
-            score = float(probabilities[classes.index(1)])
-
-    return prediction, label, score
+# ------------------------------ Model loading ------------------------------
+@st.cache_resource(show_spinner=False)
+def load_model(path_string: str):
+    """Load and cache an optional joblib model; raise useful errors on failure."""
+    if joblib is None:
+        raise ImportError("Install joblib to load .pkl models: pip install joblib")
+    path = Path(path_string)
+    if not path.exists():
+        raise FileNotFoundError(f"{path.name} was not found beside app.py.")
+    return joblib.load(path)
 
 
-# ==========================================================
-# VISUAL DESIGN
-# ==========================================================
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-:root { --ink:#e8eefc; --muted:#9eacc7; --line:rgba(148,163,184,.20); }
-.stApp { background: radial-gradient(ellipse at 15% 0%, rgba(37,99,235,.18), transparent 34%), radial-gradient(ellipse at 95% 12%, rgba(13,148,136,.13), transparent 30%), #080d18; color:var(--ink); font-family:'DM Sans',sans-serif; }
-[data-testid="stHeader"] { background:rgba(8,13,24,.78); }
-.block-container { max-width: 1220px; padding-top: 2rem; padding-bottom: 3rem; }
-h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.035em; }
-h1 { color:#f8fbff; }
-p, label, .stCaption { color:#b8c5dc; }
-[data-testid="stMetric"] { background:linear-gradient(145deg,rgba(24,36,58,.88),rgba(13,21,36,.92)); border:1px solid var(--line); padding:17px 18px; border-radius:16px; box-shadow:0 10px 30px rgba(0,0,0,.14); }
-[data-testid="stMetricLabel"] { color:#9eacc7 !important; }
-[data-testid="stMetricValue"] { color:#f5f8ff !important; }
-[data-testid="stFileUploader"] { background:rgba(20,31,51,.65); border:1px dashed rgba(96,165,250,.55); border-radius:18px; padding:12px; }
-.stButton > button { border-radius:12px; min-height:46px; font-weight:700; border:1px solid rgba(96,165,250,.45); background:linear-gradient(100deg,#2563eb,#0f9f9a); color:white; transition:transform .15s ease, filter .15s ease; }
-.stButton > button:hover { filter:brightness(1.12); transform:translateY(-1px); border-color:#7dd3fc; color:white; }
-[data-testid="stExpander"] { border:1px solid var(--line); border-radius:14px; background:rgba(15,23,42,.48); }
-[data-baseweb="tab-list"] { gap:8px; }
-[data-baseweb="tab"] { border-radius:10px; padding:10px 18px; }
-hr { border-color:var(--line); }
-.hero { padding:28px 30px; border-radius:24px; background:linear-gradient(120deg,rgba(30,64,175,.35),rgba(15,118,110,.22)),rgba(15,23,42,.82); border:1px solid rgba(125,211,252,.22); margin-bottom:20px; box-shadow:0 20px 60px rgba(0,0,0,.18); }
-.eyebrow { color:#7dd3fc; font-size:.76rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
-.hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3.2rem); line-height:1.06; font-weight:700; color:#f8fbff; margin:.5rem 0 .8rem; }
-.hero-copy { max-width:760px; color:#b9c8df; font-size:1rem; line-height:1.7; }
-.pill { display:inline-block; padding:6px 10px; margin:4px 5px 0 0; border:1px solid rgba(125,211,252,.25); border-radius:999px; color:#dbeafe; background:rgba(15,23,42,.45); font-size:.78rem; }
-.section-note { color:#9eacc7; margin-top:-.4rem; margin-bottom:1rem; }
-[data-testid="stAlert"] { border-radius:14px; }
-</style>
-""", unsafe_allow_html=True)
-
-# ==========================================================
-# PAGE HEADER
-# ==========================================================
-
-st.markdown("""
-<div class="hero">
-  <div class="eyebrow">SENTINEL • DIGITAL SAFETY LAB</div>
-  <div class="hero-title">See the risk before you share.</div>
-  <div class="hero-copy">A research prototype that helps you inspect screenshots for exposed personal information and screen email screenshots for possible phishing signals.</div>
-  <div style="margin-top:14px"><span class="pill">◈ Mathematical PEI</span><span class="pill">◈ AI-assisted detection</span><span class="pill">◈ Email threat screening</span></div>
-</div>
-""", unsafe_allow_html=True)
-
-with st.expander("⚙️ System Status · model availability", expanded=False):
-    status1, status2, status3 = st.columns(3)
-    with status1:
-        st.success("Sensitive-information detector imported")
-    with status2:
-        if pei_model_loaded:
-            st.success("PEI model loaded")
-        else:
-            st.error("PEI model not loaded")
-            st.caption(pei_model_error)
-    with status3:
-        if phishing_model_loaded:
-            st.success("Phishing model loaded")
-        else:
-            st.error("Phishing model not loaded")
-            st.caption(phishing_model_error)
-
-
-# ==========================================================
-# SECTION 1 — PRIVACY EXPOSURE INDEX
-# ==========================================================
-
-st.divider()
-st.header("Screenshot Privacy Scanner")
-st.caption("Upload an image to find visible emails, phone numbers, URLs, and QR codes, then calculate a privacy exposure score.")
-
-uploaded_file = st.file_uploader(
-    "Upload a screenshot for privacy analysis",
-    type=["png", "jpg", "jpeg"],
-    key="privacy_screenshot",
-)
-
-if uploaded_file is not None:
+def optional_model(path: Path) -> Tuple[Optional[Any], str]:
+    """Return a model or an explanation without preventing the app from starting."""
     try:
-        image = Image.open(uploaded_file).convert("RGB")
+        return load_model(str(path)), ""
     except Exception as exc:
-        st.error("The uploaded file could not be opened as an image.")
-        st.caption(str(exc))
-        image = None
-
-    if image is not None:
-        st.image(image, caption="Uploaded screenshot", use_container_width=True)
-
-        if st.button("🔍 Detect Sensitive Information", type="primary", key="run_privacy_detection"):
-            with st.spinner("Analyzing screenshot..."):
-                try:
-                    results = detect_sensitive_information(image)
-                except Exception as exc:
-                    st.error("Sensitive-information detection failed.")
-                    st.exception(exc)
-                    results = None
-
-            if results is not None:
-                # Normalize detector output so missing optional keys do not crash the app.
-                emails = results.get("emails", []) or []
-                phones = results.get("phones", []) or []
-                urls = results.get("urls", []) or []
-                qr_detected = bool(results.get("qr_detected", False))
-                qr_data = results.get("qr_data", "")
-                ocr_text = results.get("text", "")
-
-                email_count = len(emails)
-                phone_count = len(phones)
-                url_count = len(urls)
-                qr_count = int(qr_detected)
-                total_items = email_count + phone_count + url_count + qr_count
-
-                st.success("Detection completed.")
-                st.subheader("📊 Detection Summary")
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Emails", email_count)
-                c2.metric("Phone numbers", phone_count)
-                c3.metric("URLs", url_count)
-                c4.metric("QR codes", qr_count)
-                c5.metric("Total items", total_items)
-
-                with st.expander("📋 View detected information", expanded=True):
-                    if emails:
-                        for item in emails:
-                            st.write("📧 Email:", item)
-                    if phones:
-                        for item in phones:
-                            st.write("📱 Phone:", item)
-                    if urls:
-                        for item in urls:
-                            st.write("🌐 URL:", item)
-                    if qr_detected:
-                        st.write("🔳 QR code detected")
-                        if qr_data:
-                            st.write("QR content:", qr_data)
-                    if not total_items:
-                        st.info("No supported sensitive-information types were detected.")
-
-                st.subheader("2. PEI Parameters")
-                st.info(
-                    "Area, visibility, and confidence are prototype inputs. "
-                    "For research, define and validate how each value is measured."
-                )
-                p1, p2, p3 = st.columns(3)
-                with p1:
-                    area = st.slider(
-                        "Relative area (A)", 0.0, 1.0, DEFAULT_AREA, 0.05,
-                        key="pei_area",
-                    )
-                with p2:
-                    visibility = st.slider(
-                        "Visibility (V)", 0.0, 1.0, DEFAULT_VISIBILITY, 0.05,
-                        key="pei_visibility",
-                    )
-                with p3:
-                    confidence = st.slider(
-                        "Detection confidence (C)", 0.0, 1.0, DEFAULT_CONFIDENCE, 0.05,
-                        key="pei_confidence",
-                    )
-
-                st.subheader("3. Mathematical PEI Calculation")
-                item_scores = []
-                total_exposure = 0.0
-
-                for item_type, values in (
-                    ("Email", emails),
-                    ("Phone", phones),
-                    ("URL", urls),
-                ):
-                    for value in values:
-                        score = calculate_item_score(item_type, area, visibility, confidence)
-                        total_exposure += score
-                        item_scores.append({
-                            "type": item_type,
-                            "value": str(value),
-                            "weight": WEIGHTS[item_type],
-                            "score": score,
-                        })
-
-                if qr_detected:
-                    score = calculate_item_score("QR Code", area, visibility, confidence)
-                    total_exposure += score
-                    item_scores.append({
-                        "type": "QR Code",
-                        "value": str(qr_data or "Detected"),
-                        "weight": WEIGHTS["QR Code"],
-                        "score": score,
-                    })
-
-                detected_types = sum(
-                    count > 0 for count in (email_count, phone_count, url_count, qr_count)
-                )
-                diversity_factor = 1.0 + max(detected_types - 1, 0) * 0.15
-                adjusted_exposure = total_exposure * diversity_factor
-                pei = max(0.0, min(100.0, 100.0 * adjusted_exposure / R_MAX))
-                mathematical_class = classify_pei(pei)
-
-                if item_scores:
-                    st.markdown("**Individual item scores**")
-                    for item in item_scores:
-                        st.write(
-                            f"**{item['type']}** — weight {item['weight']:.2f} × "
-                            f"area {area:.2f} × visibility {visibility:.2f} × "
-                            f"confidence {confidence:.2f} = **{item['score']:.4f}**"
-                        )
-
-                st.write(f"**Detected information types:** {detected_types}")
-                st.write(f"**Diversity factor:** {diversity_factor:.2f}")
-                r1, r2, r3 = st.columns(3)
-                r1.metric("Raw exposure", f"{total_exposure:.4f}")
-                r2.metric("PEI score", f"{pei:.2f} / 100")
-                r3.metric("Sensitive items", total_items)
-
-                if mathematical_class == "LOW":
-                    st.success(f"🟢 Mathematical PEI: LOW — {pei:.2f}")
-                elif mathematical_class == "MODERATE":
-                    st.warning(f"🟡 Mathematical PEI: MODERATE — {pei:.2f}")
-                else:
-                    st.error(f"🔴 Mathematical PEI: HIGH — {pei:.2f}")
-
-                st.subheader("4. Existing PEI Machine-Learning Prediction")
-                if pei_model_loaded:
-                    try:
-                        ml_input = [[
-                            email_count,
-                            phone_count,
-                            url_count,
-                            qr_count,
-                            total_exposure,
-                            pei,
-                        ]]
-                        ml_prediction = str(pei_model.predict(ml_input)[0]).upper()
-                        st.write("**ML predicted exposure level:**", ml_prediction)
-
-                        left, right = st.columns(2)
-                        left.metric("Mathematical PEI", mathematical_class)
-                        right.metric("PEI model prediction", ml_prediction)
-
-                        if mathematical_class == ml_prediction:
-                            st.success("The mathematical classification and PEI model prediction agree.")
-                        else:
-                            st.warning("The mathematical classification and PEI model prediction differ.")
-                    except Exception as exc:
-                        st.error("The PEI model prediction failed. Check the model's expected input features.")
-                        st.exception(exc)
-                else:
-                    st.warning("PEI model unavailable. The mathematical PEI result is still shown.")
-
-                with st.expander("📘 View mathematical formulas"):
-                    st.markdown("**Individual exposure score**")
-                    st.latex(r"s_i = w_i \times A_i \times V_i \times C_i")
-                    st.markdown("**Adjusted total exposure**")
-                    st.latex(r"R = \left(\sum_i s_i\right) \times D")
-                    st.markdown("**Privacy Exposure Index**")
-                    st.latex(r"PEI = 100 \times \frac{R}{R_{\max}}")
-                    st.write("D is the diversity factor; Rmax is the prototype reference value.")
-
-                with st.expander("📝 View OCR text"):
-                    st.code(ocr_text or "The detector did not return OCR text.")
+        return None, str(exc)
 
 
+pei_model, pei_model_error = optional_model(PEI_MODEL_PATH)
+phishing_model, phishing_model_error = optional_model(PHISHING_MODEL_PATH)
 
-# ==========================================================
-# SECTION 2 — SCREENSHOT PHISHING EMAIL CHECKER
-# ==========================================================
 
-st.divider()
-st.header("Email Threat Scanner")
-st.caption("Upload a screenshot of a suspicious email. OCR extracts its text, and the phishing model evaluates that text for warning patterns.")
-st.write(
-    "Upload a screenshot of an email. The app extracts visible text with OCR, then passes "
-    "that text to `phishing_model.pkl`. The model was trained on email text, not image pixels."
-)
-st.warning(
-    "Use caution with real personal information. OCR can misread text, and a model result "
-    "is not a guarantee. Verify suspicious messages through the official website or app "
-    "using a known address—not links in the message."
-)
-
-phishing_upload = st.file_uploader(
-    "Upload an email screenshot",
-    type=["png", "jpg", "jpeg"],
-    key="phishing_email_screenshot",
-)
-
-if phishing_upload is not None:
+# ------------------------------ Shared helpers -----------------------------
+def open_uploaded_image(uploaded_file) -> Image.Image:
+    """Validate and fully load an uploaded image, returning an RGB copy."""
+    if uploaded_file is None:
+        raise ValueError("Please upload a screenshot first.")
+    if not uploaded_file.getvalue():
+        raise ValueError("The uploaded file is empty. Choose a valid screenshot.")
     try:
-        phishing_image = Image.open(phishing_upload).convert("RGB")
-        st.image(phishing_image, caption="Email screenshot", use_container_width=True)
-    except Exception as exc:
-        phishing_image = None
-        st.error("The screenshot could not be opened.")
-        st.caption(str(exc))
+        uploaded_file.seek(0)
+        with Image.open(uploaded_file) as source:
+            source.verify()
+        uploaded_file.seek(0)
+        with Image.open(uploaded_file) as source:
+            source.load()
+            return source.convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError("This file could not be read as an image. Try a clear PNG or JPG screenshot.") from exc
 
-    if phishing_image is not None and st.button(
-        "🛡️ Analyze Email for Phishing",
-        type="primary",
-        key="run_phishing_check",
-    ):
-        if not phishing_model_loaded:
-            st.error("The phishing model could not be loaded.")
-            st.caption(phishing_model_error)
+
+def clip_unit(value: float, label: str) -> float:
+    """Validate a finite numeric parameter in the inclusive range 0–1."""
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a number from 0 to 1.") from exc
+    if not 0.0 <= numeric <= 1.0:
+        raise ValueError(f"{label} must be between 0 and 1.")
+    return numeric
+
+
+def count_items(found: Dict[str, Any]) -> Dict[str, int]:
+    """Count supported detector categories safely, even if keys are missing."""
+    return {
+        "Email": len(found.get("emails") or []),
+        "Phone": len(found.get("phones") or []),
+        "URL": len(found.get("urls") or []),
+        "QR Code": int(bool(found.get("qr_detected", False))),
+    }
+
+
+def detect_privacy_items(image: Image.Image) -> Dict[str, Any]:
+    """Call the project's detector and normalize its result structure."""
+    if detect_sensitive_information is None:
+        raise RuntimeError(
+            "The privacy detector could not be imported. Make sure detector.py is in the same folder as app.py "
+            "and that its dependencies are installed."
+        )
+    result = detect_sensitive_information(image)
+    if not isinstance(result, dict):
+        raise RuntimeError("The detector returned an unexpected result. It must return a dictionary.")
+    return {
+        "emails": list(result.get("emails") or []),
+        "phones": list(result.get("phones") or []),
+        "urls": list(result.get("urls") or []),
+        "qr_detected": bool(result.get("qr_detected", False)),
+        "qr_data": str(result.get("qr_data") or ""),
+        "text": str(result.get("text") or ""),
+    }
+
+
+# ------------------------------ PEI calculation ----------------------------
+def calculate_pei(
+    counts: Dict[str, int], area: float, visibility: float, confidence: float
+) -> Dict[str, Any]:
+    """Calculate bounded category exposure and a 0–100 PEI.
+
+    For category k with n_k detections:
+      E_k = w_k * (1 - 2**(-n_k)) * A * V * C
+      PEI = 100 * sum(E_k) / sum(w_k)
+
+    The diminishing-return term ensures repeated items in one category do not
+    make the score exceed 100. Each input is validated before arithmetic.
+    """
+    area = clip_unit(area, "Relative area")
+    visibility = clip_unit(visibility, "Visibility")
+    confidence = clip_unit(confidence, "Detection confidence")
+    factor = area * visibility * confidence
+    category_rows = []
+    raw_total = 0.0
+    for category, weight in WEIGHTS.items():
+        try:
+            count = int(counts.get(category, 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Count for {category} must be a non-negative integer.") from exc
+        if count < 0:
+            raise ValueError(f"Count for {category} cannot be negative.")
+        saturation = 1.0 - (0.5 ** count) if count else 0.0
+        contribution = weight * saturation * factor
+        raw_total += contribution
+        category_rows.append({
+            "category": category, "count": count, "weight": weight,
+            "saturation": saturation, "factor": factor, "contribution": contribution,
+        })
+    score = 0.0 if R_MAX == 0 else 100.0 * raw_total / R_MAX
+    score = max(0.0, min(100.0, score))
+    level = "LOW" if score <= 33.33 else "MODERATE" if score <= 66.67 else "HIGH"
+    return {
+        "counts": counts, "area": area, "visibility": visibility,
+        "confidence": confidence, "factor": factor, "rows": category_rows,
+        "raw_total": raw_total, "r_max": R_MAX, "score": score, "level": level,
+    }
+
+
+def show_pei_calculation(result: Dict[str, Any]) -> None:
+    """Render the PEI formula, substituted values, and transparent arithmetic."""
+    st.subheader("Mathematical PEI calculation")
+    st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
+    st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=\sum_k w_k=0.60")
+    st.caption("A = relative area, V = visibility, C = detection confidence, nₖ = number of detected items in category k.")
+    st.markdown("**Step 1 — Substitute values for each category**")
+    for row in result["rows"]:
+        st.write(
+            f"**{row['category']}**: E = {row['weight']:.2f} × (1 − 2⁻{row['count']}) × "
+            f"{result['area']:.2f} × {result['visibility']:.2f} × {result['confidence']:.2f} "
+            f"= **{row['contribution']:.4f}**"
+        )
+    pieces = " + ".join(f"{row['contribution']:.4f}" for row in result["rows"])
+    st.markdown("**Step 2 — Add category contributions**")
+    st.code(f"R = {pieces} = {result['raw_total']:.4f}", language="text")
+    st.markdown("**Step 3 — Normalize to a 0–100 index**")
+    st.code(
+        f"PEI = 100 × ({result['raw_total']:.4f} / {result['r_max']:.2f})\n"
+        f"PEI = {result['score']:.2f} / 100",
+        language="text",
+    )
+
+
+# ---------------------------- Phishing analysis ----------------------------
+def extract_text(image: Image.Image) -> str:
+    """Extract screenshot text with Tesseract OCR and validate the output."""
+    if pytesseract is None:
+        raise RuntimeError("OCR library missing. Install pytesseract and the Tesseract OCR engine.")
+    try:
+        text = pytesseract.image_to_string(image).strip()
+    except Exception as exc:
+        raise RuntimeError(
+            "OCR could not process this screenshot. Confirm Tesseract OCR is installed and try a clearer image."
+        ) from exc
+    if not text:
+        raise ValueError("No readable text was found. Upload a clearer email screenshot with visible text.")
+    return text
+
+
+def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
+    """Find transparent rule-based indicators and calculate a provisional 0–100 score."""
+    text = email_text.lower()
+    urgency_terms = ["urgent", "immediately", "act now", "within 24 hours", "account will be closed", "final warning", "verify now"]
+    credential_terms = ["password", "login", "log in", "verify your account", "verification code", "one-time code", "otp", "credentials", "sign in"]
+    threat_terms = ["suspended", "will be closed", "locked", "legal action", "terminated", "unauthorized activity", "security alert"]
+    money_terms = ["winner", "claim your reward", "free money", "payment required", "transfer money", "bank details", "claim your gift", "prize", "refund"]
+    urls = re.findall(r"(?:https?://|www\.)[^\s<>\"']+", email_text, flags=re.IGNORECASE)
+    flags = {
+        "Urgency / pressure": int(any(term in text for term in urgency_terms)),
+        "Credential request": int(any(term in text for term in credential_terms)),
+        "Visible link": int(bool(urls)),
+        "Threat / consequence": int(any(term in text for term in threat_terms)),
+        "Money / reward bait": int(any(term in text for term in money_terms)),
+        "Multiple URLs": int(len(urls) >= 2),
+    }
+    points = {name: PHISHING_WEIGHTS[name] * flag for name, flag in flags.items()}
+    total = min(100, sum(points.values()))
+    verdict = "Safe" if total < 30 else "Suspicious" if total < 60 else "Phishing"
+    return {"urls": urls, "flags": flags, "points": points, "score": total, "verdict": verdict}
+
+
+def predict_with_model(email_text: str):
+    """Use existing text-trained model when available; tolerate model API differences."""
+    if phishing_model is None:
+        return None, None, ""
+    try:
+        prediction = phishing_model.predict([email_text])[0]
+        # The user's existing model uses 0 = legitimate and 1 = phishing.
+        label_text = str(prediction).strip().lower()
+        if prediction == 1 or label_text in {"phishing", "spam", "malicious"}:
+            label = "Phishing"
+        elif prediction == 0 or label_text in {"legitimate", "safe", "ham", "not phishing"}:
+            label = "Safe"
         else:
+            label = "Suspicious"
+        probability = None
+        if hasattr(phishing_model, "predict_proba"):
             try:
-                with st.spinner("Extracting text and checking the email..."):
-                    extracted_text = extract_screenshot_text(phishing_image)
-                    prediction, classification, phishing_score = predict_phishing(
-                        extracted_text, phishing_model
-                    )
+                probabilities = phishing_model.predict_proba([email_text])[0]
+                classes = list(getattr(phishing_model, "classes_", []))
+                if 1 in classes:
+                    probability = float(probabilities[classes.index(1)])
+            except Exception:
+                probability = None
+        return label, probability, ""
+    except Exception as exc:
+        return None, None, str(exc)
 
-                st.subheader("Extracted Email Text")
-                st.text_area(
-                    "OCR result (review for recognition errors)",
-                    extracted_text,
-                    height=180,
-                    key="phishing_ocr_result",
-                )
 
-                st.subheader("Phishing Model Result")
-                if prediction == 1:
-                    st.error("⚠️ Potentially Phishing")
-                    st.write(
-                        "The model classified the extracted email text as phishing. "
-                        "Do not click links or provide passwords or verification codes."
-                    )
-                elif prediction == 0:
-                    st.success("Model result: Likely Legitimate")
-                    st.write(
-                        "This is only a model prediction. It does not prove the email is safe."
-                    )
-                else:
-                    st.info("The model returned an unknown label.")
+def render_phishing_result(email_text: str) -> None:
+    """Show indicator-level math, the final rule verdict, and optional model output."""
+    analysis = get_phishing_indicators(email_text)
+    st.subheader("Detection method and scoring formula")
+    st.latex(r"S = \min\left(100,\sum_i w_i I_i\right)")
+    st.caption("Iᵢ is 1 when an indicator is found and 0 otherwise. These weights are provisional research rules, not calibrated probabilities.")
+    st.markdown("**Indicators and points**")
+    for name, flag in analysis["flags"].items():
+        points = analysis["points"][name]
+        status = "Found" if flag else "Not found"
+        st.write(f"- **{name}** — {status}: {flag} × {PHISHING_WEIGHTS[name]} = **{points} points**")
+    st.code("Score = " + " + ".join(str(analysis["points"][name]) for name in analysis["points"]) + f" = {analysis['score']}/100", language="text")
+    st.metric("Rule-based phishing risk score", f"{analysis['score']}/100")
+    verdict = analysis["verdict"]
+    if verdict == "Safe":
+        st.success("Rule-based verdict: Safe (no/low indicators detected)")
+    elif verdict == "Suspicious":
+        st.warning("Rule-based verdict: Suspicious — review carefully")
+    else:
+        st.error("Rule-based verdict: Phishing indicators are strong")
+    st.caption("A 'Safe' result means the listed rules found few indicators; it does not prove that the email is safe.")
+    if analysis["urls"]:
+        with st.expander("Visible URLs found"):
+            for url in analysis["urls"]:
+                st.write(url)
+    model_label, model_probability, model_error = predict_with_model(email_text)
+    st.markdown("**Existing machine-learning model**")
+    if model_label is not None:
+        st.write(f"Model classification: **{model_label}**")
+        if model_probability is not None:
+            st.metric("Model phishing score", f"{model_probability:.1%}")
+            st.caption("This is the model's reported score and may not be a calibrated real-world probability.")
+    elif phishing_model is None:
+        st.info("The optional phishing_model.pkl is unavailable. The rule-based score above still works.")
+    else:
+        st.warning("The trained model could not run on this text; the rule-based result is still available.")
+        st.caption(model_error)
 
-                st.write("**Classification:**", classification)
-                if phishing_score is not None:
-                    st.metric("Model phishing score", f"{phishing_score:.1%}")
-                    st.caption(
-                        "This score is the model's output and may not be a calibrated "
-                        "real-world probability."
-                    )
+
+# ---------------------------------- UI -------------------------------------
+def render_header() -> None:
+    """Render consistent application header and global styling."""
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
+    .stApp { background: radial-gradient(ellipse at 12% 0%, rgba(37,99,235,.14), transparent 35%), #0b1120; }
+    .block-container { max-width: 1220px; padding-top: 2rem; padding-bottom: 3rem; }
+    h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.025em; }
+    [data-testid="stMetric"] { background:rgba(24,36,58,.72); border:1px solid rgba(148,163,184,.2); padding:15px; border-radius:15px; }
+    [data-testid="stFileUploader"] { background:rgba(20,31,51,.45); border:1px dashed rgba(96,165,250,.5); border-radius:15px; padding:10px; }
+    .hero { padding:26px 28px; border-radius:22px; background:linear-gradient(120deg,rgba(30,64,175,.35),rgba(15,118,110,.2)),rgba(15,23,42,.8); border:1px solid rgba(125,211,252,.22); margin-bottom:20px; }
+    .eyebrow { color:#7dd3fc; font-size:.75rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
+    .hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3rem); line-height:1.08; font-weight:700; color:#f8fbff; margin:.55rem 0 .75rem; }
+    .hero-copy { max-width:780px; color:#bdcbe0; line-height:1.65; }
+    .pill { display:inline-block; padding:5px 10px; margin:8px 6px 0 0; border:1px solid rgba(125,211,252,.25); border-radius:999px; color:#dbeafe; background:rgba(15,23,42,.4); font-size:.78rem; }
+    .stButton>button { min-height:44px; border-radius:11px; font-weight:700; }
+    [data-testid="stAlert"] { border-radius:12px; }
+    </style>
+    <div class="hero">
+      <div class="eyebrow">Sentinel • Digital Safety Lab</div>
+      <div class="hero-title">See the risk before you share.</div>
+      <div class="hero-copy">Analyze screenshot privacy exposure and inspect email screenshots for common phishing indicators using transparent, explainable calculations.</div>
+      <span class="pill">Mathematical PEI</span><span class="pill">OCR + detector</span><span class="pill">Phishing indicators</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_status() -> None:
+    """Display optional dependency and model status without blocking the app."""
+    with st.expander("System status · dependencies and models", expanded=False):
+        c1, c2, c3 = st.columns(3)
+        c1.write("**Privacy detector**")
+        c1.success("Available") if detect_sensitive_information else c1.error("detector.py import failed")
+        c2.write("**PEI model**")
+        c2.success("Loaded") if pei_model is not None else c2.info(f"Optional model unavailable: {pei_model_error}")
+        c3.write("**Phishing model**")
+        c3.success("Loaded") if phishing_model is not None else c3.info(f"Optional model unavailable: {phishing_model_error}")
+        if pytesseract is None:
+            st.warning("pytesseract is not installed. Install requirements and the Tesseract OCR system engine for phishing screenshot OCR.")
+
+
+def render_pei_tool() -> None:
+    """Upload, analyze, and calculate the screenshot PEI."""
+    st.header("Screenshot Privacy Scanner")
+    st.write("Find supported visible personal-information types, then calculate the PEI with an itemized formula.")
+    uploaded = st.file_uploader("Upload a privacy screenshot", type=ALLOWED_TYPES, key="privacy_upload", help="Supported formats: PNG, JPG, JPEG. Use a screenshot you have permission to analyze.")
+    if uploaded is None:
+        st.info("Upload a PNG or JPG screenshot to begin.")
+        return
+    try:
+        image = open_uploaded_image(uploaded)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    st.image(image, caption="Uploaded screenshot", use_container_width=True)
+    with st.expander("PEI formula used for this scan", expanded=True):
+        st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
+        st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=0.60")
+        st.caption("The numerical substitution and final result appear after you run the scan.")
+    with st.form("pei_form"):
+        st.markdown("**Measurement inputs**")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            area = st.slider("Relative area (A)", 0.0, 1.0, DEFAULT_AREA, 0.05)
+        with col2:
+            visibility = st.slider("Visibility (V)", 0.0, 1.0, DEFAULT_VISIBILITY, 0.05)
+        with col3:
+            confidence = st.slider("Detection confidence (C)", 0.0, 1.0, DEFAULT_CONFIDENCE, 0.05)
+        submitted = st.form_submit_button("Detect and calculate PEI", type="primary", use_container_width=True)
+    if not submitted:
+        return
+    with st.spinner("Detecting supported sensitive information..."):
+        try:
+            found = detect_privacy_items(image)
+            counts = count_items(found)
+            result = calculate_pei(counts, area, visibility, confidence)
+        except Exception as exc:
+            st.error("The PEI analysis could not be completed.")
+            st.caption(str(exc))
+            return
+    st.success("Screenshot processed successfully.")
+    metrics = st.columns(5)
+    for col, label, key in zip(metrics, ["Emails", "Phone numbers", "URLs", "QR codes", "Total detections"], ["Email", "Phone", "URL", "QR Code", "total"]):
+        value = sum(counts.values()) if key == "total" else counts[key]
+        col.metric(label, value)
+    with st.expander("Detected items", expanded=True):
+        for label, key in [("Email", "emails"), ("Phone", "phones"), ("URL", "urls")]:
+            values = found[key]
+            st.markdown(f"**{label}**")
+            if values:
+                for value in values:
+                    st.write(f"- {value}")
+            else:
+                st.caption("None detected")
+        st.markdown("**QR Code**")
+        if found["qr_detected"]:
+            st.write("QR code detected")
+            if found["qr_data"]:
+                st.code(found["qr_data"])
+        else:
+            st.caption("None detected")
+    show_pei_calculation(result)
+    out1, out2, out3 = st.columns(3)
+    out1.metric("Raw exposure R", f"{result['raw_total']:.4f}")
+    out2.metric("Privacy Exposure Index", f"{result['score']:.2f} / 100")
+    out3.metric("Exposure category", result["level"])
+    if result["level"] == "LOW":
+        st.success(f"PEI result: LOW — {result['score']:.2f}/100")
+    elif result["level"] == "MODERATE":
+        st.warning(f"PEI result: MODERATE — {result['score']:.2f}/100")
+    else:
+        st.error(f"PEI result: HIGH — {result['score']:.2f}/100")
+    if pei_model is not None:
+        st.subheader("Optional PEI machine-learning comparison")
+        try:
+            model_input = [[counts["Email"], counts["Phone"], counts["URL"], counts["QR Code"], result["raw_total"], result["score"]]]
+            prediction = str(pei_model.predict(model_input)[0]).strip().upper()
+            st.write(f"PEI model prediction: **{prediction}**")
+            if prediction == result["level"]:
+                st.success("Model prediction matches the formula-based category.")
+            else:
+                st.warning("Model prediction differs from the formula-based category.")
+        except Exception as exc:
+            st.warning("The optional PEI model could not process its six expected numeric features; the mathematical PEI remains available.")
+            st.caption(str(exc))
+    with st.expander("OCR text returned by detector"):
+        st.text(found["text"] or "No OCR text was returned.")
+
+
+def render_phishing_tool() -> None:
+    """Upload an email screenshot and show transparent phishing indicator scoring."""
+    st.header("Email Phishing Detector")
+    st.write("OCR extracts the visible email text. The rule-based scoring formula lists every indicator and its points, and an optional trained text model is also shown when available.")
+    uploaded = st.file_uploader("Upload an email screenshot", type=ALLOWED_TYPES, key="phishing_upload", help="Supported formats: PNG, JPG, JPEG. OCR accuracy depends on image clarity and text size.")
+    if uploaded is None:
+        st.info("Upload a PNG or JPG screenshot of an email to begin.")
+        return
+    try:
+        image = open_uploaded_image(uploaded)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+    st.image(image, caption="Uploaded email screenshot", use_container_width=True)
+    with st.expander("Phishing scoring formula used for this scan", expanded=True):
+        st.latex(r"S = \min\left(100,\sum_i w_i I_i\right)")
+        st.caption("Each indicator contributes its assigned points only when detected. The indicator list, point substitutions, total, and verdict appear after analysis.")
+    if st.button("Analyze email screenshot", type="primary", key="analyze_phishing", use_container_width=True):
+        with st.spinner("Extracting screenshot text and checking indicators..."):
+            try:
+                text = extract_text(image)
+                st.subheader("Extracted text (check for OCR errors)")
+                st.text_area("Recognized email content", value=text, height=190, key="ocr_email_text")
+                render_phishing_result(text)
             except Exception as exc:
                 st.error("The phishing analysis could not be completed.")
                 st.caption(str(exc))
 
 
-# ==========================================================
-# FOOTER
-# ==========================================================
+def main() -> None:
+    """Render app navigation and selected tool."""
+    render_header()
+    render_status()
+    privacy_tab, phishing_tab, formula_tab = st.tabs(["🔐 PEI Calculator", "📧 Phishing Detector", "∑ Formula & Validation"])
+    with privacy_tab:
+        render_pei_tool()
+    with phishing_tab:
+        render_phishing_tool()
+    with formula_tab:
+        st.header("Formulas and interpretation")
+        st.info("The equations below are the exact formulas used by this app. PEI weights and phishing thresholds are configurable research assumptions, not universally accepted standards; validate them before reporting scientific conclusions.")
+        st.subheader("Privacy Exposure Index")
+        st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
+        st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=0.60")
+        st.write("Category weights: Email 0.15, Phone 0.15, URL 0.10, QR Code 0.20. A, V, and C are values from 0 to 1. Repeated detections contribute with diminishing returns so the PEI remains bounded by 100.")
+        st.subheader("Phishing indicator score")
+        st.latex(r"S = \min\left(100,\sum_i w_i I_i\right)")
+        st.write("The rule-based verdict is Safe for scores below 30, Suspicious for scores from 30 to below 60, and Phishing for scores of 60 or above. These are provisional research thresholds, not empirically validated probabilities.")
+        st.subheader("Validation examples")
+        st.markdown("**Example 1 — one email, A = 1.00, V = 1.00, C = 0.90**")
+        sample1 = calculate_pei({"Email": 1, "Phone": 0, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
+        st.code(f"R = 0.15 × (1 − 2⁻¹) × 1.00 × 1.00 × 0.90 = 0.0675\nPEI = 100 × 0.0675 / 0.60 = {sample1['score']:.2f}")
+        st.markdown("**Example 2 — one email, one phone, A = 1.00, V = 1.00, C = 0.90**")
+        sample2 = calculate_pei({"Email": 1, "Phone": 1, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
+        st.code(f"R = 0.0675 + 0.0675 = 0.1350\nPEI = 100 × 0.1350 / 0.60 = {sample2['score']:.2f}")
+        st.caption("For a defensible research result, document how area, visibility, confidence, weights, and thresholds were selected, then validate them against independently labelled screenshots.")
+    st.divider()
+    st.caption("Sentinel is a research prototype. OCR and rule/model predictions can be wrong; validate the detector, weights, thresholds, and model on independent test data before making research claims.")
 
-st.divider()
-st.caption(
-    "Research prototype only. Validate the detector, PEI thresholds, model performance, "
-    "and OCR pipeline on appropriate independent test data before making research claims."
-)
+
+if __name__ == "__main__":
+    main()
