@@ -229,11 +229,18 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
         "urgent", "immediately", "act now", "within 24 hours", "final warning",
         "verify now", "respond immediately", "limited time",
     ]
+    # Flag explicit requests to disclose credentials or sensitive data.
+    # Generic words such as "verification code" or "verify your account" are
+    # intentionally excluded because legitimate services use them too.
     credential_phrases = [
         "enter your password", "confirm your password", "send your password",
-        "provide your password", "verify your account", "verify your identity",
-        "share your otp", "send the otp", "verification code", "one-time code",
-        "login credentials", "sign in to restore", "update your payment details",
+        "provide your password", "share your otp", "send the otp",
+        "give us your otp", "reply with your otp", "enter your one-time password",
+        "share your one-time password", "provide your login credentials",
+        "send your login credentials", "enter your login credentials",
+        "update your payment details", "enter your bank details",
+        "send your bank details", "provide your credit card number",
+        "enter your credit card number", "reply with your password",
     ]
     threat_terms = [
         "account will be closed", "account suspended", "account is suspended",
@@ -308,32 +315,43 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
 
 
 def predict_with_model(email_text: str):
-    """Use existing text-trained model when available; tolerate model API differences."""
+    """Return normalized model label and phishing-class score when identifiable."""
     if phishing_model is None:
-        return None, None, ""
+        return None, None, phishing_model_error or "Phishing model is unavailable."
+
     try:
         prediction = phishing_model.predict([email_text])[0]
-        # The user's existing model uses 0 = legitimate and 1 = phishing.
         label_text = str(prediction).strip().lower()
-        if prediction == 1 or label_text in {"phishing", "spam", "malicious"}:
+
+        # Normalize common numeric and text labels.
+        if label_text in {"1", "phishing", "phish", "spam", "malicious", "fraud"}:
             label = "Phishing"
-        elif prediction == 0 or label_text in {"legitimate", "safe", "ham", "not phishing"}:
+        elif label_text in {"0", "legitimate", "legit", "safe", "ham", "not phishing", "not_phishing"}:
             label = "Safe"
         else:
             label = "Suspicious"
+
         probability = None
         if hasattr(phishing_model, "predict_proba"):
             try:
                 probabilities = phishing_model.predict_proba([email_text])[0]
                 classes = list(getattr(phishing_model, "classes_", []))
-                if 1 in classes:
-                    probability = float(probabilities[classes.index(1)])
+
+                # Handle either numeric labels (0/1) or string labels.
+                phishing_indices = [
+                    index for index, cls in enumerate(classes)
+                    if str(cls).strip().lower() in {
+                        "1", "phishing", "phish", "spam", "malicious", "fraud"
+                    }
+                ]
+                if phishing_indices:
+                    probability = float(probabilities[phishing_indices[0]])
             except Exception:
                 probability = None
+
         return label, probability, ""
     except Exception as exc:
         return None, None, str(exc)
-
 
 def render_phishing_result(email_text: str) -> None:
     """Present cautious triage, keeping model output separate from rule evidence."""
