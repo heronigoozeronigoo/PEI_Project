@@ -1,9 +1,9 @@
 
-# ============================================================
-# PHISHING EMAIL MODEL TRAINER
-# Dataset: phishing_legit_dataset_KD_10000.csv
-# Output: phishing_model.pkl
-# ============================================================
+# ==========================================================
+# EMAIL PHISHING MODEL — VERSION 2
+# Dataset: Zenodo Phishing-Email-Detection-Dataset
+# Labels: 0 = Safe/Legitimate, 1 = Phishing
+# ==========================================================
 
 from pathlib import Path
 import json
@@ -15,217 +15,215 @@ from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
+    classification_report,
+    confusion_matrix,
     precision_score,
     recall_score,
     f1_score,
-    confusion_matrix,
-    classification_report,
-    roc_auc_score
+    roc_auc_score,
 )
 
-# ------------------------------------------------------------
-# 1. FILE PATHS
-# ------------------------------------------------------------
+# ----------------------------------------------------------
+# CONFIGURATION
+# ----------------------------------------------------------
 
 BASE_DIR = Path(__file__).resolve().parent
 
-DATASET_PATH = BASE_DIR / "phishing_legit_dataset_KD_10000.csv"
-MODEL_PATH = BASE_DIR / "phishing_model.pkl"
-RESULTS_PATH = BASE_DIR / "phishing_model_evaluation.json"
+DATASET = BASE_DIR / "Balanced_Dataset.csv"
 
-TEST_SIZE = 0.20
+# Keep the existing model safe.
+MODEL_OUTPUT = BASE_DIR / "email_phishing_model_v2.pkl"
+REPORT_OUTPUT = BASE_DIR / "email_phishing_model_v2_evaluation.json"
+
 RANDOM_STATE = 42
+TEST_SIZE = 0.20
 
-
-# ------------------------------------------------------------
-# 2. LOAD DATASET
-# ------------------------------------------------------------
+# ----------------------------------------------------------
+# LOAD DATA
+# ----------------------------------------------------------
 
 print("=" * 60)
-print("PHISHING EMAIL MODEL TRAINER")
+print("EMAIL PHISHING MODEL — VERSION 2")
 print("=" * 60)
 
-if not DATASET_PATH.exists():
+if not DATASET.exists():
     raise FileNotFoundError(
-        f"Dataset not found: {DATASET_PATH.name}\n"
-        "Make sure the CSV is in the same folder as this script."
+        f"Dataset not found: {DATASET}\n"
+        "Place Balanced_Dataset.csv beside this script."
     )
 
-df = pd.read_csv(DATASET_PATH)
+print("\nLoading dataset...")
 
-print("\nDataset columns:", df.columns.tolist())
-print("Original number of rows:", len(df))
+df = pd.read_csv(
+    DATASET,
+    usecols=["body", "label"],
+    dtype={"body": "string", "label": "string"},
+    on_bad_lines="error",
+)
 
-TEXT_COLUMN = "text"
-LABEL_COLUMN = "label"
+df = df.dropna(subset=["body", "label"]).copy()
+df["body"] = df["body"].str.strip()
+df["label"] = df["label"].str.strip()
 
-if TEXT_COLUMN not in df.columns or LABEL_COLUMN not in df.columns:
+df = df[df["body"] != ""]
+
+# Verify that labels are exactly the expected classes.
+valid_labels = {"0", "0.0", "1", "1.0"}
+unexpected = set(df["label"].unique()) - valid_labels
+
+if unexpected:
     raise ValueError(
-        "Expected columns 'text' and 'label'. "
-        f"Found: {df.columns.tolist()}"
+        f"Unexpected labels found: {unexpected}"
     )
 
+# Convert verified labels to integers.
+df["label"] = df["label"].map({
+    "0": 0,
+    "0.0": 0,
+    "1": 1,
+    "1.0": 1,
+})
 
-# ------------------------------------------------------------
-# 3. CLEAN DATA
-# ------------------------------------------------------------
+df = df.dropna(subset=["label"])
+df["label"] = df["label"].astype(int)
 
-df = df[[TEXT_COLUMN, LABEL_COLUMN]].copy()
+# Remove exact duplicate bodies that have conflicting labels.
+label_counts_by_body = df.groupby("body")["label"].nunique()
+conflicting_bodies = label_counts_by_body[
+    label_counts_by_body > 1
+].index
 
-df[TEXT_COLUMN] = (
-    df[TEXT_COLUMN]
-    .fillna("")
-    .astype(str)
-    .str.strip()
-)
-
-df[LABEL_COLUMN] = pd.to_numeric(
-    df[LABEL_COLUMN],
-    errors="coerce"
-)
-
-df = df.dropna(subset=[LABEL_COLUMN])
-df = df[df[TEXT_COLUMN] != ""]
-df = df[df[LABEL_COLUMN].isin([0, 1])]
-
-df[LABEL_COLUMN] = df[LABEL_COLUMN].astype(int)
-
-# Remove identical email text before splitting.
-# If identical text has conflicting labels, exclude it.
-label_counts = df.groupby(TEXT_COLUMN)[LABEL_COLUMN].nunique()
-conflicting_texts = label_counts[label_counts > 1].index
-
-if len(conflicting_texts) > 0:
+if len(conflicting_bodies):
     print(
-        "\nRemoving identical texts with conflicting labels:",
-        len(conflicting_texts)
+        "Removing conflicting duplicate bodies:",
+        len(conflicting_bodies)
     )
-    df = df[~df[TEXT_COLUMN].isin(conflicting_texts)]
+    df = df[~df["body"].isin(conflicting_bodies)].copy()
 
-df = df.drop_duplicates(subset=[TEXT_COLUMN]).reset_index(drop=True)
+# Remove exact duplicate body/label pairs.
+before = len(df)
+df = df.drop_duplicates(subset=["body", "label"])
+print("Duplicate rows removed:", before - len(df))
 
-if df[LABEL_COLUMN].nunique() != 2:
+if df["label"].nunique() != 2:
     raise ValueError(
-        "Both labels 0 and 1 must be present after cleaning."
+        "The dataset must contain both labels 0 and 1."
     )
 
-print("\nCleaned rows:", len(df))
+print("\nUsable emails:", len(df))
 print("\nLabel counts:")
-print(df[LABEL_COLUMN].value_counts().sort_index())
+print(df["label"].value_counts().sort_index())
+print("\nLabel meanings: 0 = legitimate; 1 = phishing")
 
-print("\nLabel mapping:")
-print("0 = Legitimate")
-print("1 = Phishing")
+# ----------------------------------------------------------
+# SPLIT DATA
+# ----------------------------------------------------------
 
-
-# ------------------------------------------------------------
-# 4. SPLIT INTO TRAINING AND TEST SETS
-# ------------------------------------------------------------
-
-X = df[TEXT_COLUMN]
-y = df[LABEL_COLUMN]
+X = df["body"]
+y = df["label"]
 
 X_train, X_test, y_train, y_test = train_test_split(
     X,
     y,
     test_size=TEST_SIZE,
     random_state=RANDOM_STATE,
-    stratify=y
+    stratify=y,
 )
 
-print("\nTraining rows:", len(X_train))
-print("Testing rows:", len(X_test))
+print("\nTraining samples:", len(X_train))
+print("Test samples:", len(X_test))
 
-
-# ------------------------------------------------------------
-# 5. CREATE THE MODEL PIPELINE
-# ------------------------------------------------------------
+# ----------------------------------------------------------
+# BUILD AND TRAIN MODEL
+# ----------------------------------------------------------
 
 model = Pipeline([
     (
         "tfidf",
         TfidfVectorizer(
             lowercase=True,
+            strip_accents="unicode",
             ngram_range=(1, 2),
             max_features=20000,
+            min_df=2,
             sublinear_tf=True,
-            strip_accents="unicode"
-        )
+            dtype=float,
+        ),
     ),
     (
         "classifier",
         LogisticRegression(
             max_iter=1000,
             class_weight="balanced",
-            random_state=RANDOM_STATE
-        )
-    )
+            random_state=RANDOM_STATE,
+        ),
+    ),
 ])
-
-
-# ------------------------------------------------------------
-# 6. TRAIN
-# ------------------------------------------------------------
 
 print("\nTraining model...")
 model.fit(X_train, y_train)
-print("Training complete.")
 
+# ----------------------------------------------------------
+# EVALUATE ON HELD-OUT TEST DATA
+# ----------------------------------------------------------
 
-# ------------------------------------------------------------
-# 7. EVALUATE ON THE HELD-OUT TEST SET
-# ------------------------------------------------------------
+print("\nEvaluating held-out test data...")
 
 predictions = model.predict(X_test)
-probabilities = model.predict_proba(X_test)[:, 1]
+probabilities = model.predict_proba(X_test)
+
+classes = list(model.classes_)
+phishing_column = classes.index(1)
+phishing_scores = probabilities[:, phishing_column]
 
 accuracy = accuracy_score(y_test, predictions)
-balanced_acc = balanced_accuracy_score(y_test, predictions)
+balanced_accuracy = balanced_accuracy_score(y_test, predictions)
 
 precision = precision_score(
     y_test, predictions, pos_label=1, zero_division=0
 )
-
 recall = recall_score(
     y_test, predictions, pos_label=1, zero_division=0
 )
-
 f1 = f1_score(
     y_test, predictions, pos_label=1, zero_division=0
 )
 
-roc_auc = roc_auc_score(y_test, probabilities)
-
-matrix = confusion_matrix(
+# Positive = phishing; negative = legitimate.
+tn, fp, fn, tp = confusion_matrix(
     y_test, predictions, labels=[0, 1]
-)
-
-tn, fp, fn, tp = matrix.ravel()
+).ravel()
 
 false_positive_rate = (
-    fp / (fp + tn) if (fp + tn) else 0.0
+    fp / (fp + tn) if (fp + tn) > 0 else 0.0
 )
+
+try:
+    roc_auc = roc_auc_score(y_test, phishing_scores)
+except ValueError:
+    roc_auc = None
 
 print("\n" + "=" * 60)
 print("HELD-OUT TEST RESULTS")
 print("=" * 60)
 
 print(f"Accuracy:            {accuracy:.4f}")
-print(f"Balanced accuracy:   {balanced_acc:.4f}")
+print(f"Balanced accuracy:   {balanced_accuracy:.4f}")
 print(f"Phishing precision:  {precision:.4f}")
 print(f"Phishing recall:     {recall:.4f}")
 print(f"Phishing F1-score:   {f1:.4f}")
-print(f"ROC-AUC:             {roc_auc:.4f}")
 print(f"False-positive rate: {false_positive_rate:.4f}")
 
-print("\nConfusion matrix:")
-print("Rows = actual; columns = predicted")
-print("Class order: 0 = Legitimate, 1 = Phishing")
-print(matrix)
+if roc_auc is not None:
+    print(f"ROC-AUC:             {roc_auc:.4f}")
+
+print("\nConfusion matrix")
+print("Rows = actual [legitimate, phishing]")
+print("Columns = predicted [legitimate, phishing]")
+print(confusion_matrix(y_test, predictions, labels=[0, 1]))
 
 print("\nClassification report:")
 print(
@@ -234,67 +232,53 @@ print(
         predictions,
         labels=[0, 1],
         target_names=["Legitimate", "Phishing"],
-        zero_division=0
+        zero_division=0,
     )
 )
 
-print("\nConfusion matrix details:")
-print("True negatives:", tn)
-print("False positives:", fp)
-print("False negatives:", fn)
-print("True positives:", tp)
+# ----------------------------------------------------------
+# SAVE MODEL AND EVALUATION REPORT
+# ----------------------------------------------------------
 
+# Save to a NEW filename. Do not overwrite the existing model.
+joblib.dump(model, MODEL_OUTPUT)
 
-# ------------------------------------------------------------
-# 8. SAVE EVALUATION RESULTS
-# ------------------------------------------------------------
-
-results = {
-    "dataset": DATASET_PATH.name,
-    "cleaned_rows": int(len(df)),
-    "training_rows": int(len(X_train)),
-    "testing_rows": int(len(X_test)),
-    "test_size": TEST_SIZE,
-    "random_state": RANDOM_STATE,
+report = {
+    "dataset": DATASET.name,
     "label_mapping": {
         "0": "Legitimate",
-        "1": "Phishing"
+        "1": "Phishing",
     },
+    "random_state": RANDOM_STATE,
+    "test_size": TEST_SIZE,
+    "total_samples": int(len(df)),
+    "training_samples": int(len(X_train)),
+    "test_samples": int(len(X_test)),
     "accuracy": float(accuracy),
-    "balanced_accuracy": float(balanced_acc),
+    "balanced_accuracy": float(balanced_accuracy),
     "phishing_precision": float(precision),
     "phishing_recall": float(recall),
-    "phishing_f1_score": float(f1),
-    "roc_auc": float(roc_auc),
+    "phishing_f1": float(f1),
     "false_positive_rate": float(false_positive_rate),
-    "confusion_matrix": {
-        "true_negatives": int(tn),
-        "false_positives": int(fp),
-        "false_negatives": int(fn),
-        "true_positives": int(tp)
-    }
+    "roc_auc": float(roc_auc) if roc_auc is not None else None,
+    "confusion_matrix": [
+        [int(tn), int(fp)],
+        [int(fn), int(tp)],
+    ],
+    "warning": (
+        "Metrics are from a random held-out split of this dataset. "
+        "They do not establish performance on independent modern emails."
+    ),
 }
 
-with open(RESULTS_PATH, "w", encoding="utf-8") as file:
-    json.dump(results, file, indent=4)
+with open(REPORT_OUTPUT, "w", encoding="utf-8") as file:
+    json.dump(report, file, indent=4)
 
-print("\nEvaluation saved to:", RESULTS_PATH.name)
+print("\nModel saved to:")
+print(MODEL_OUTPUT)
 
+print("\nEvaluation report saved to:")
+print(REPORT_OUTPUT)
 
-# ------------------------------------------------------------
-# 9. SAVE MODEL
-# ------------------------------------------------------------
-
-joblib.dump(model, MODEL_PATH)
-
-print("\nModel saved to:", MODEL_PATH.name)
-print("Existing pei_model.pkl was not modified.")
-
-print("\nIMPORTANT:")
-print("- Results are from a held-out test split.")
-print("- Good test results do not guarantee real-world accuracy.")
-print("- This model predicts email text, not screenshot images.")
-print("- Your app must extract screenshot text with OCR first.")
-
-print("\nTRAINING PROCESS COMPLETED")
-print("=" * 60)
+print("\nTraining and evaluation completed.")
+print("The original email_phishing_model.pkl was not overwritten.")

@@ -1,0 +1,30 @@
+{
+    "dataset": "Balanced_Dataset.csv",
+    "label_mapping": {
+        "0": "Legitimate",
+        "1": "Phishing"
+    },
+    "random_state": 42,
+    "test_size": 0.2,
+    "total_samples": 193704,
+    "training_samples": 154963,
+    "test_samples": 38741,
+    "accuracy": 0.9774915464236855,
+    "balanced_accuracy": 0.9774392783272157,
+    "phishing_precision": 0.9741968125474323,
+    "phishing_recall": 0.9815466177295203,
+    "phishing_f1": 0.9778579046264791,
+    "false_positive_rate": 0.026668061075088893,
+    "roc_auc": 0.997229672821437,
+    "confusion_matrix": [
+        [
+            18614,
+            510
+        ],
+        [
+            362,
+            19255
+        ]
+    ],
+    "warning": "Metrics are from a random held-out split of this dataset. They do not establish performance on independent modern emails."
+}
