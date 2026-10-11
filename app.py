@@ -139,14 +139,12 @@ def detect_privacy_items(image: Image.Image) -> Dict[str, Any]:
 def calculate_pei(
     counts: Dict[str, int], area: float, visibility: float, confidence: float
 ) -> Dict[str, Any]:
-    """Calculate bounded category exposure and a 0–100 PEI.
+    """Calculate item-additive exposure and normalize it to a 0–100 PEI.
 
-    For category k with n_k detections:
-      E_k = w_k * (1 - 2**(-n_k)) * A * V * C
-      PEI = 100 * sum(E_k) / sum(w_k)
-
-    The diminishing-return term ensures repeated items in one category do not
-    make the score exceed 100. Each input is validated before arithmetic.
+    Each detected item contributes S_i * A * V * C, where S_i is the
+    sensitivity weight for that item's category. R_MAX is the maximum raw
+    score for one item in each supported category. The final score is capped
+    at 100 so repeated detections cannot exceed the index range.
     """
     area = clip_unit(area, "Relative area")
     visibility = clip_unit(visibility, "Visibility")
@@ -161,45 +159,47 @@ def calculate_pei(
             raise ValueError(f"Count for {category} must be a non-negative integer.") from exc
         if count < 0:
             raise ValueError(f"Count for {category} cannot be negative.")
-        saturation = 1.0 - (0.5 ** count) if count else 0.0
-        contribution = weight * saturation * factor
+        contribution = weight * count * factor
         raw_total += contribution
         category_rows.append({
             "category": category, "count": count, "weight": weight,
-            "saturation": saturation, "factor": factor, "contribution": contribution,
+            "factor": factor, "contribution": contribution,
         })
-    score = 0.0 if R_MAX == 0 else 100.0 * raw_total / R_MAX
-    score = max(0.0, min(100.0, score))
+    unbounded_score = 0.0 if R_MAX == 0 else 100.0 * raw_total / R_MAX
+    score = max(0.0, min(100.0, unbounded_score))
     level = "LOW" if score <= 33.33 else "MODERATE" if score <= 66.67 else "HIGH"
     return {
         "counts": counts, "area": area, "visibility": visibility,
         "confidence": confidence, "factor": factor, "rows": category_rows,
-        "raw_total": raw_total, "r_max": R_MAX, "score": score, "level": level,
+        "raw_total": raw_total, "r_max": R_MAX, "unbounded_score": unbounded_score,
+        "score": score, "level": level,
     }
 
 
 def show_pei_calculation(result: Dict[str, Any]) -> None:
-    """Render the PEI formula, substituted values, and transparent arithmetic."""
+    """Render the item-based PEI formula and transparent arithmetic."""
     st.subheader("Mathematical PEI calculation")
-    st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
-    st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=\sum_k w_k=0.60")
-    st.caption("A = relative area, V = visibility, C = detection confidence, nₖ = number of detected items in category k.")
-    st.markdown("**Step 1 — Substitute values for each category**")
+    st.latex(r"E_i = S_i A_i V_i C_i")
+    st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
+    st.caption("Sᵢ = sensitivity weight; Aᵢ = relative area; Vᵢ = visibility; Cᵢ = detection confidence. In this prototype, A, V, and C are shared measurement inputs for all detected items.")
+    st.markdown("**Step 1 — Calculate each category's item contribution**")
     for row in result["rows"]:
         st.write(
-            f"**{row['category']}**: E = {row['weight']:.2f} × (1 − 2⁻{row['count']}) × "
+            f"**{row['category']}**: E = {row['weight']:.2f} × {row['count']} × "
             f"{result['area']:.2f} × {result['visibility']:.2f} × {result['confidence']:.2f} "
             f"= **{row['contribution']:.4f}**"
         )
     pieces = " + ".join(f"{row['contribution']:.4f}" for row in result["rows"])
-    st.markdown("**Step 2 — Add category contributions**")
+    st.markdown("**Step 2 — Add item contributions**")
     st.code(f"R = {pieces} = {result['raw_total']:.4f}", language="text")
-    st.markdown("**Step 3 — Normalize to a 0–100 index**")
+    st.markdown("**Step 3 — Normalize and cap the index at 100**")
     st.code(
-        f"PEI = 100 × ({result['raw_total']:.4f} / {result['r_max']:.2f})\n"
+        f"PEI = 100 × min(1, {result['raw_total']:.4f} / {result['r_max']:.2f})\n"
         f"PEI = {result['score']:.2f} / 100",
         language="text",
     )
+    if result["unbounded_score"] > 100:
+        st.caption("The uncapped score exceeded 100, so the reported PEI was capped at 100.")
 
 
 # ---------------------------- Phishing analysis ----------------------------
@@ -497,8 +497,8 @@ def render_pei_tool() -> None:
         return
     st.image(image, caption="Uploaded screenshot", use_container_width=True)
     with st.expander("PEI formula used for this scan", expanded=True):
-        st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
-        st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=0.60")
+        st.latex(r"E_i = S_i A_i V_i C_i")
+        st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
         st.caption("The numerical substitution and final result appear after you run the scan.")
     with st.form("pei_form"):
         st.markdown("**Measurement inputs**")
