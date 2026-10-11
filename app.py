@@ -1,7 +1,7 @@
 """Sentinel — screenshot privacy exposure and phishing screening research app.
 
 Run with: streamlit run app.py
-Optional local files: detector.py, pei_model.pkl, phishing_model.pkl.
+Required/optional local files: detector.py, pei_model.pkl, email_phishing_model.pkl.
 """
 from pathlib import Path
 import re
@@ -28,7 +28,7 @@ except Exception:
 
 BASE_DIR = Path(__file__).resolve().parent
 PEI_MODEL_PATH = BASE_DIR / "pei_model.pkl"
-PHISHING_MODEL_PATH = BASE_DIR / "phishing_model.pkl"
+PHISHING_MODEL_PATH = BASE_DIR / "email_phishing_model.pkl"
 ALLOWED_TYPES = ["png", "jpg", "jpeg"]
 
 # PEI weights are the research prototype's chosen sensitivity weights.
@@ -571,32 +571,86 @@ def render_pei_tool() -> None:
 
 
 def render_phishing_tool() -> None:
-    """Upload an email screenshot and show transparent phishing indicator scoring."""
+    """Analyze an email screenshot with OCR or directly pasted email text."""
     st.header("Email Phishing Detector")
-    st.write("OCR extracts the visible email text. The rule-based scoring formula lists every indicator and its points, and an optional trained text model is also shown when available.")
-    uploaded = st.file_uploader("Upload an email screenshot", type=ALLOWED_TYPES, key="phishing_upload", help="Supported formats: PNG, JPG, JPEG. OCR accuracy depends on image clarity and text size.")
-    if uploaded is None:
-        st.info("Upload a PNG or JPG screenshot of an email to begin.")
-        return
-    try:
-        image = open_uploaded_image(uploaded)
-    except ValueError as exc:
-        st.error(str(exc))
-        return
-    st.image(image, caption="Uploaded email screenshot", use_container_width=True)
-    with st.expander("Phishing scoring formula used for this scan", expanded=True):
-        st.latex(r"S = \min\left(100,\sum_i w_i I_i\right)")
-        st.caption("Each indicator contributes its assigned points only when detected. The indicator list, point substitutions, total, and verdict appear after analysis.")
-    if st.button("Analyze email screenshot", type="primary", key="analyze_phishing", use_container_width=True):
-        with st.spinner("Extracting screenshot text and checking indicators..."):
+    st.write(
+        "Analyze an email screenshot using OCR or paste email text directly. "
+        "The trained text model provides the primary classification, while "
+        "the rule-based indicators explain additional warning signs."
+    )
+
+    input_method = st.radio(
+        "Choose your input method:",
+        ["Upload screenshot", "Paste email text"],
+        horizontal=True,
+        key="email_input_method",
+    )
+
+    email_text = ""
+
+    if input_method == "Upload screenshot":
+        uploaded = st.file_uploader(
+            "Upload an email screenshot",
+            type=ALLOWED_TYPES,
+            key="phishing_upload",
+            help="Supported formats: PNG, JPG, JPEG. OCR accuracy depends on image clarity.",
+        )
+        if uploaded is None:
+            st.info("Upload a PNG or JPG screenshot of an email to begin.")
+            return
+
+        try:
+            image = open_uploaded_image(uploaded)
+        except ValueError as exc:
+            st.error(str(exc))
+            return
+
+        st.image(image, caption="Uploaded email screenshot", use_container_width=True)
+        if not st.button(
+            "Analyze email screenshot",
+            type="primary",
+            key="analyze_phishing",
+            use_container_width=True,
+        ):
+            return
+
+        with st.spinner("Extracting screenshot text with OCR..."):
             try:
-                text = extract_text(image)
-                st.subheader("Extracted text (check for OCR errors)")
-                st.text_area("Recognized email content", value=text, height=190, key="ocr_email_text")
-                render_phishing_result(text)
+                email_text = extract_text(image)
             except Exception as exc:
                 st.error("The phishing analysis could not be completed.")
                 st.caption(str(exc))
+                return
+
+        st.subheader("Extracted text (check for OCR errors)")
+        st.text_area(
+            "Recognized email content",
+            value=email_text,
+            height=190,
+            key="ocr_email_text",
+        )
+
+    else:
+        pasted_text = st.text_area(
+            "Paste the email or message here",
+            height=220,
+            placeholder="Paste the sender, message body, and any visible links here...",
+            key="pasted_email_text",
+        )
+        if not st.button(
+            "Analyze pasted email",
+            type="primary",
+            key="analyze_pasted_email",
+            use_container_width=True,
+        ):
+            return
+        email_text = pasted_text.strip()
+        if not email_text:
+            st.warning("Please paste some email text before analyzing.")
+            return
+
+    st.divider()
+    render_phishing_result(email_text)
 
 
 def main() -> None:
