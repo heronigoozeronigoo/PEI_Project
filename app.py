@@ -1,7 +1,7 @@
 """Sentinel — screenshot privacy exposure and phishing screening research app.
 
 Run with: streamlit run app.py
-Required/optional local files: detector.py, pei_model.pkl, email_phishing_model.pkl.
+Required/optional local files: detector.py, pei_model.pkl, email_phishing_model_v2.pkl.
 """
 from pathlib import Path
 import re
