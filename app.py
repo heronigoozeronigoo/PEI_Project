@@ -218,7 +218,7 @@ def extract_text(image: Image.Image) -> str:
 
 
 def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
-    """Find transparent rule-based indicators and calculate a provisional 0–100 score."""
+    """Find transparent rule-based indicators, suspicious sentences, and a 0–100 score."""
     text = email_text.lower()
     urgency_terms = ["urgent", "immediately", "act now", "within 24 hours", "account will be closed", "final warning", "verify now"]
     credential_terms = ["password", "login", "log in", "verify your account", "verification code", "one-time code", "otp", "credentials", "sign in"]
@@ -236,7 +236,32 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
     points = {name: PHISHING_WEIGHTS[name] * flag for name, flag in flags.items()}
     total = min(100, sum(points.values()))
     verdict = "Safe" if total < 30 else "Suspicious" if total < 60 else "Phishing"
-    return {"urls": urls, "flags": flags, "points": points, "score": total, "verdict": verdict}
+
+    # Preserve the exact OCR sentence(s) that contain terms associated with risk.
+    sentence_patterns = {
+        "Urgency / pressure": urgency_terms,
+        "Credential request": credential_terms,
+        "Threat / consequence": threat_terms,
+        "Money / reward bait": money_terms,
+    }
+    suspicious_sentences = []
+    for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", email_text):
+        cleaned = sentence.strip(" \t\r\n•-–")
+        if not cleaned:
+            continue
+        reasons = [
+            indicator for indicator, terms in sentence_patterns.items()
+            if any(term in cleaned.lower() for term in terms)
+        ]
+        if re.search(r"(?:https?://|www\.)[^\s<>\"']+", cleaned, flags=re.IGNORECASE):
+            reasons.append("Contains a visible link")
+        if reasons:
+            suspicious_sentences.append({"sentence": cleaned, "reasons": list(dict.fromkeys(reasons))})
+
+    return {
+        "urls": urls, "flags": flags, "points": points, "score": total,
+        "verdict": verdict, "suspicious_sentences": suspicious_sentences,
+    }
 
 
 def predict_with_model(email_text: str):
@@ -281,13 +306,44 @@ def render_phishing_result(email_text: str) -> None:
     st.code("Score = " + " + ".join(str(analysis["points"][name]) for name in analysis["points"]) + f" = {analysis['score']}/100", language="text")
     st.metric("Rule-based phishing risk score", f"{analysis['score']}/100")
     verdict = analysis["verdict"]
+    # Clear green/yellow/red status light plus accessible text verdict.
     if verdict == "Safe":
-        st.success("Rule-based verdict: Safe (no/low indicators detected)")
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
+            "border:1px solid #22c55e;border-radius:14px;background:rgba(34,197,94,.12);'>"
+            "<span style='font-size:2rem;line-height:1'>🟢</span>"
+            "<div><strong style='color:#4ade80;font-size:1.2rem'>GREEN LIGHT · SAFE</strong>"
+            "<div style='color:inherit'>Few rule-based warning signs were detected.</div></div></div>",
+            unsafe_allow_html=True,
+        )
     elif verdict == "Suspicious":
-        st.warning("Rule-based verdict: Suspicious — review carefully")
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
+            "border:1px solid #eab308;border-radius:14px;background:rgba(234,179,8,.13);'>"
+            "<span style='font-size:2rem;line-height:1'>🟡</span>"
+            "<div><strong style='color:#facc15;font-size:1.2rem'>YELLOW LIGHT · SUSPICIOUS</strong>"
+            "<div style='color:inherit'>Pause and verify the sender and links before acting.</div></div></div>",
+            unsafe_allow_html=True,
+        )
     else:
-        st.error("Rule-based verdict: Phishing indicators are strong")
-    st.caption("A 'Safe' result means the listed rules found few indicators; it does not prove that the email is safe.")
+        st.markdown(
+            "<div style='display:flex;align-items:center;gap:12px;padding:16px 18px;"
+            "border:1px solid #ef4444;border-radius:14px;background:rgba(239,68,68,.13);'>"
+            "<span style='font-size:2rem;line-height:1'>🔴</span>"
+            "<div><strong style='color:#f87171;font-size:1.2rem'>RED LIGHT · PHISHING RISK</strong>"
+            "<div style='color:inherit'>Do not click links or share passwords, codes, or payment details.</div></div></div>",
+            unsafe_allow_html=True,
+        )
+    st.caption("The light is based on the rule-based score. A green result does not prove an email is safe; OCR and rules can miss threats.")
+
+    st.subheader("Suspicious sentence review")
+    if analysis["suspicious_sentences"]:
+        st.write("These exact OCR-extracted sentence(s) contain wording or links associated with common phishing signals:")
+        for item in analysis["suspicious_sentences"]:
+            st.warning(f"“{item['sentence']}”\n\n**Signals:** {', '.join(item['reasons'])}")
+    else:
+        st.info("No sentence matched the current suspicious-wording or visible-link rules. This does not guarantee the email is legitimate.")
+
     if analysis["urls"]:
         with st.expander("Visible URLs found"):
             for url in analysis["urls"]:
