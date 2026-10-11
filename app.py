@@ -28,7 +28,7 @@ except Exception:
 
 BASE_DIR = Path(__file__).resolve().parent
 PEI_MODEL_PATH = BASE_DIR / "pei_model.pkl"
-PHISHING_MODEL_PATH = BASE_DIR / "email_phishing_model.pkl"
+PHISHING_MODEL_PATH = BASE_DIR / "email_phishing_model_v2.pkl"
 ALLOWED_TYPES = ["png", "jpg", "jpeg"]
 
 # PEI weights are the research prototype's chosen sensitivity weights.
@@ -549,6 +549,23 @@ def render_pei_tool() -> None:
     out3.metric("Exposure category", result["level"])
     if result["level"] == "LOW":
         st.success(f"PEI result: LOW — {result['score']:.2f}/100")
+        missing_categories = [
+            category for category, count in counts.items() if count == 0
+        ]
+        if missing_categories:
+            st.warning(
+                "Debug note: the LOW score may be caused by undetected categories: "
+                + ", ".join(missing_categories)
+                + ". Check the detected-items list and OCR text below. "
+                "The PEI formula only scores categories that the detector finds."
+            )
+        elif area == 1.0 and visibility == 1.0 and confidence >= 0.9:
+            st.error(
+                "Calculation diagnostic: all four categories were detected, "
+                "but the score is LOW. With the current weights and formula, "
+                "this combination should not produce a LOW score. Please review "
+                "the calculation values and deployed version."
+            )
     elif result["level"] == "MODERATE":
         st.warning(f"PEI result: MODERATE — {result['score']:.2f}/100")
     else:
