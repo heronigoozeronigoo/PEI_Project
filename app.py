@@ -5,6 +5,7 @@ Optional local files: detector.py, pei_model.pkl, phishing_model.pkl.
 """
 from pathlib import Path
 import re
+from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
@@ -39,12 +40,12 @@ DEFAULT_CONFIDENCE = 0.90
 
 # Provisional phishing indicator weights. These are points, not probabilities.
 PHISHING_WEIGHTS = {
-    "Urgency / pressure": 20,
-    "Credential request": 25,
-    "Visible link": 15,
-    "Threat / consequence": 20,
-    "Money / reward bait": 10,
-    "Multiple URLs": 10,
+    "Credential / sensitive-data request": 25,
+    "Suspicious URL pattern": 25,
+    "Urgency / pressure": 15,
+    "Threat / consequence": 15,
+    "Money / reward bait": 15,
+    "Multiple URLs": 5,
 }
 
 st.set_page_config(page_title="Sentinel | Digital Safety Lab", page_icon="🛡️", layout="wide", initial_sidebar_state="expanded")
@@ -218,29 +219,70 @@ def extract_text(image: Image.Image) -> str:
 
 
 def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
-    """Find transparent rule-based indicators, suspicious sentences, and a 0–100 score."""
+    """Calculate a transparent heuristic risk score from specific warning signals.
+
+    This score is a screening aid, not a probability or a validated substitute for
+    the trained classifier. Merely containing a URL no longer adds risk by itself.
+    """
     text = email_text.lower()
-    urgency_terms = ["urgent", "immediately", "act now", "within 24 hours", "account will be closed", "final warning", "verify now"]
-    credential_terms = ["password", "login", "log in", "verify your account", "verification code", "one-time code", "otp", "credentials", "sign in"]
-    threat_terms = ["suspended", "will be closed", "locked", "legal action", "terminated", "unauthorized activity", "security alert"]
-    money_terms = ["winner", "claim your reward", "free money", "payment required", "transfer money", "bank details", "claim your gift", "prize", "refund"]
+    urgency_terms = [
+        "urgent", "immediately", "act now", "within 24 hours", "final warning",
+        "verify now", "respond immediately", "limited time",
+    ]
+    credential_phrases = [
+        "enter your password", "confirm your password", "send your password",
+        "provide your password", "verify your account", "verify your identity",
+        "share your otp", "send the otp", "verification code", "one-time code",
+        "login credentials", "sign in to restore", "update your payment details",
+    ]
+    threat_terms = [
+        "account will be closed", "account suspended", "account is suspended",
+        "account locked", "will be terminated", "legal action", "access will be blocked",
+        "unauthorized activity", "service will be discontinued",
+    ]
+    money_terms = [
+        "claim your reward", "free money", "payment required", "transfer money",
+        "claim your gift", "you have won", "you are the winner", "prize money",
+        "refund available", "urgent payment", "bank details",
+    ]
     urls = re.findall(r"(?:https?://|www\.)[^\s<>\"']+", email_text, flags=re.IGNORECASE)
+    shortener_hosts = {
+        "bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "shorturl.at",
+    }
+    suspicious_url_reasons = []
+    for raw_url in urls:
+        candidate = raw_url.rstrip(".,;:!?) ]}")
+        parsed = urlparse(candidate if candidate.lower().startswith(("http://", "https://")) else "http://" + candidate)
+        host = (parsed.hostname or "").lower().strip(".")
+        reasons = []
+        if host in shortener_hosts or any(host.endswith("." + domain) for domain in shortener_hosts):
+            reasons.append("URL shortener hides the destination")
+        if host and re.fullmatch(r"[0-9.]+", host):
+            reasons.append("IP-address host instead of a normal domain")
+        if "@" in parsed.netloc:
+            reasons.append("URL contains @, which can obscure the apparent destination")
+        if "xn--" in host:
+            reasons.append("punycode domain may use look-alike characters")
+        if host.count("-") >= 3:
+            reasons.append("domain contains several hyphens")
+        if reasons:
+            suspicious_url_reasons.append({"url": candidate, "reasons": reasons})
+
     flags = {
+        "Credential / sensitive-data request": int(any(term in text for term in credential_phrases)),
+        "Suspicious URL pattern": int(bool(suspicious_url_reasons)),
         "Urgency / pressure": int(any(term in text for term in urgency_terms)),
-        "Credential request": int(any(term in text for term in credential_terms)),
-        "Visible link": int(bool(urls)),
         "Threat / consequence": int(any(term in text for term in threat_terms)),
         "Money / reward bait": int(any(term in text for term in money_terms)),
         "Multiple URLs": int(len(urls) >= 2),
     }
     points = {name: PHISHING_WEIGHTS[name] * flag for name, flag in flags.items()}
     total = min(100, sum(points.values()))
-    verdict = "Safe" if total < 30 else "Suspicious" if total < 60 else "Phishing"
+    verdict = "Lower indicator score" if total < 25 else "Elevated indicators" if total < 50 else "High indicator score"
 
-    # Preserve the exact OCR sentence(s) that contain terms associated with risk.
     sentence_patterns = {
         "Urgency / pressure": urgency_terms,
-        "Credential request": credential_terms,
+        "Credential / sensitive-data request": credential_phrases,
         "Threat / consequence": threat_terms,
         "Money / reward bait": money_terms,
     }
@@ -253,14 +295,15 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
             indicator for indicator, terms in sentence_patterns.items()
             if any(term in cleaned.lower() for term in terms)
         ]
-        if re.search(r"(?:https?://|www\.)[^\s<>\"']+", cleaned, flags=re.IGNORECASE):
-            reasons.append("Contains a visible link")
+        if any(cleaned_url in cleaned for item in suspicious_url_reasons for cleaned_url in [item["url"]]):
+            reasons.append("Contains a URL with a suspicious pattern")
         if reasons:
             suspicious_sentences.append({"sentence": cleaned, "reasons": list(dict.fromkeys(reasons))})
 
     return {
         "urls": urls, "flags": flags, "points": points, "score": total,
         "verdict": verdict, "suspicious_sentences": suspicious_sentences,
+        "suspicious_urls": suspicious_url_reasons,
     }
 
 
@@ -355,10 +398,11 @@ def render_phishing_result(email_text: str) -> None:
 
     st.divider()
     st.subheader("2. Explainable rule-based indicator score")
-    st.latex(r"S_{rules}=\min\left(100,\sum_i w_i I_i\right)")
+    st.latex(r"S_{rules}=\min\left(100,\sum_{i=1}^{n} w_i I_i\right)")
     st.caption(
-        "This is a separate prototype score made from manually assigned points. "
-        "It is not a probability and does not replace the ML classification."
+        "Each indicator is binary (Iᵢ = 1 when detected, otherwise 0). The weights sum to 100, "
+        "so the score is the sum of triggered points. Weights are provisional and not empirically validated; "
+        "this score is not a probability and does not replace the ML classification. A URL alone is not treated as suspicious."
     )
     st.markdown("**Indicators and point calculation**")
     for name, flag in analysis["flags"].items():
@@ -372,8 +416,12 @@ def render_phishing_result(email_text: str) -> None:
     )
     st.metric("Rule-based indicator score", f"{analysis['score']}/100")
     st.caption(
-        f"Rule-only band: {analysis['verdict']}. This band is provisional; do not interpret it as a verified prediction."
+        f"Heuristic result: {analysis['verdict']}. This band is provisional; do not interpret it as a verified prediction."
     )
+    if analysis["suspicious_urls"]:
+        with st.expander("Why a URL was flagged"):
+            for item in analysis["suspicious_urls"]:
+                st.write(f"**{item['url']}** — " + "; ".join(item["reasons"]))
 
     st.subheader("3. Suspicious sentence review")
     if analysis["suspicious_sentences"]:
