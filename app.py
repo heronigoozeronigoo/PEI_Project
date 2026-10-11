@@ -225,9 +225,12 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
     the trained classifier. Merely containing a URL no longer adds risk by itself.
     """
     text = email_text.lower()
+    # Use stronger pressure phrases; ordinary promotional calls to action
+    # (for example, "start creating" or "jump in") are not phishing evidence.
     urgency_terms = [
-        "urgent", "immediately", "act now", "within 24 hours", "final warning",
-        "verify now", "respond immediately", "limited time",
+        "urgent action required", "respond immediately", "within 24 hours",
+        "final warning", "your account will expire", "act immediately",
+        "failure to respond", "limited time to verify",
     ]
     # Flag explicit requests to disclose credentials or sensitive data.
     # Generic words such as "verification code" or "verify your account" are
@@ -363,27 +366,34 @@ def render_phishing_result(email_text: str) -> None:
     # not validated probabilities or proof that a message is safe.
     rule_score = analysis["score"]
     if model_label is None:
-        triage = "NEEDS MANUAL REVIEW"
-        triage_reason = "The machine-learning model was unavailable, so no model-based verdict can be made."
+        triage = "NEEDS REVIEW"
+        triage_reason = "The machine-learning model was unavailable; this result is based on rule indicators only."
     elif model_probability is not None:
+        # Conservative provisional bands. These thresholds are not validated
+        # probability cutoffs and must be assessed on a held-out labeled dataset.
         if model_probability >= 0.80 and rule_score >= 25:
-            triage = "HIGH CONCERN — VERIFY BEFORE ACTING"
-            triage_reason = "The model score is high and at least one meaningful rule-based warning signal was found."
+            triage = "POTENTIAL PHISHING"
+            triage_reason = "The model score is high and at least one rule-based indicator is present. Verify the sender and destination independently."
         elif model_probability <= 0.20 and rule_score < 25:
-            triage = "NO STRONG WARNING SIGNALS DETECTED"
-            triage_reason = "Both the model score and rule-based indicators are low; this does not guarantee the email is safe."
+            triage = "NO STRONG PHISHING SIGNALS DETECTED"
+            triage_reason = "The model score and rule score are both low. This does not guarantee that the email is safe."
+        elif model_probability >= 0.80 or rule_score >= 50:
+            triage = "NEEDS REVIEW — MIXED EVIDENCE"
+            triage_reason = "At least one method shows elevated concern, but the current evidence does not meet the combined threshold."
         else:
-            triage = "NEEDS MANUAL REVIEW"
-            triage_reason = "The model and rule-based evidence are not strong enough to make a confident screening decision."
+            triage = "NEEDS REVIEW — INCONCLUSIVE"
+            triage_reason = "Neither the model score nor the rule indicators meet the current screening thresholds."
     else:
-        # Some model types do not provide probabilities. A positive class label
-        # alone is not enough to display a definitive phishing verdict.
+        # Do not present a class-only prediction as a confident verdict.
         if model_label == "Phishing" and rule_score >= 25:
-            triage = "HIGH CONCERN — VERIFY BEFORE ACTING"
-            triage_reason = "The model predicts phishing and rule-based warning signals also appear."
+            triage = "POTENTIAL PHISHING"
+            triage_reason = "The model predicts phishing and rule-based indicators are also present. Verify the message before acting."
+        elif model_label == "Safe" and rule_score < 25:
+            triage = "NO STRONG PHISHING SIGNALS DETECTED"
+            triage_reason = "The model predicts a safe class and few rule indicators were detected. This is not a guarantee."
         else:
-            triage = "NEEDS MANUAL REVIEW"
-            triage_reason = "The model's class label alone is insufficient for a confident verdict."
+            triage = "NEEDS REVIEW — INCONCLUSIVE"
+            triage_reason = "The class label and rule indicators do not provide enough agreement for a confident screening result."
 
     st.subheader("Email result")
     st.write(f"**Result: {triage.title()}**")
