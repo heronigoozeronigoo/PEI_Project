@@ -123,61 +123,33 @@ def detect_emails(text):
 # ==========================================================
 
 def detect_urls(text):
-
+    """Detect URLs with or without a scheme or www prefix."""
     text = clean_text(text)
 
-    # Standard URLs
-    pattern = r"""
-    (?:
-        https?://
-        |
-        www\.
-    )
-    [^\s<>"']+
-    """
-
-    urls = re.findall(
-        pattern,
-        text,
+    pattern = re.compile(
+        r"""
+        (?<![@A-Za-z0-9_-])
+        (?:
+            https?://
+            |
+            www\.
+        )?
+        (?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+
+        [A-Za-z]{2,}
+        (?::\d{1,5})?
+        (?:/[^\s<>"']*)?
+        """,
         re.IGNORECASE | re.VERBOSE
     )
 
-    # Handle OCR spaces:
-    # www . example . com
-    spaced_pattern = r"""
-    (?:
-        https?://
-        |
-        www
-    )
-    \s*\.\s*
-    [A-Za-z0-9.-]+
-    \s*\.\s*
-    [A-Za-z]{2,}
-    """
+    urls = []
+    for match in pattern.finditer(text):
+        url = match.group(0).strip().rstrip(".,;:!?)]}>\"'")
 
-    spaced_urls = re.findall(
-        spaced_pattern,
-        text,
-        re.IGNORECASE | re.VERBOSE
-    )
+        if url and url.lower() not in [existing.lower() for existing in urls]:
+            urls.append(url)
 
-    urls.extend(spaced_urls)
-
-    final = []
-
-    for url in urls:
-
-        url = url.strip()
-
-        url = url.rstrip(
-            ".,;:!?)]}>\"'"
-        )
-
-        if url not in final:
-            final.append(url)
-
-    return final
+    return urls
 
 
 # ==========================================================
@@ -266,76 +238,40 @@ def detect_phones(text):
 # ==========================================================
 
 def detect_qr(image):
+    """Detect QR codes in several image variants; decoding text is optional."""
+    image_rgb = np.array(image.convert("RGB"))
+    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
-    image_rgb = np.array(
-        image.convert("RGB")
+    enlarged = cv2.resize(
+        image_bgr, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC
     )
-
-    image_cv = cv2.cvtColor(
-        image_rgb,
-        cv2.COLOR_RGB2BGR
+    enlarged_gray = cv2.resize(
+        gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC
     )
+    threshold = cv2.threshold(
+        enlarged_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )[1]
 
     detector = cv2.QRCodeDetector()
 
-    images_to_test = []
-
-    # Original
-    images_to_test.append(
-        image_cv
-    )
-
-    # Enlarged
-    enlarged = cv2.resize(
-        image_cv,
-        None,
-        fx=2,
-        fy=2,
-        interpolation=cv2.INTER_CUBIC
-    )
-
-    images_to_test.append(
-        enlarged
-    )
-
-    # Grayscale
-    gray = cv2.cvtColor(
-        image_cv,
-        cv2.COLOR_BGR2GRAY
-    )
-
-    images_to_test.append(
-        gray
-    )
-
-    # Threshold
-    threshold = cv2.threshold(
-        gray,
-        0,
-        255,
-        cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )[1]
-
-    images_to_test.append(
-        threshold
-    )
-
-    for test_image in images_to_test:
-
+    for candidate in [image_bgr, gray, enlarged, enlarged_gray, threshold]:
         try:
-
-            data, points, _ = (
-                detector.detectAndDecode(
-                    test_image
-                )
-            )
-
+            data, points, _ = detector.detectAndDecode(candidate)
+            # A visible QR code counts as detected even if its payload cannot be decoded.
             if points is not None:
+                return True, data or ""
 
-                return True, data
-
+            if hasattr(detector, "detectAndDecodeMulti"):
+                result = detector.detectAndDecodeMulti(candidate)
+                if result and result[0]:
+                    decoded_info = result[1]
+                    nonempty = [value for value in decoded_info if value]
+                    return True, "\n".join(nonempty)
+        except cv2.error:
+            continue
         except Exception:
-            pass
+            continue
 
     return False, ""
 
