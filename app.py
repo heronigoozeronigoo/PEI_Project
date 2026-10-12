@@ -137,11 +137,12 @@ def detect_privacy_items(image: Image.Image) -> Dict[str, Any]:
 def calculate_pei(
     counts: Dict[str, int], area: float, visibility: float, confidence: float
 ) -> Dict[str, Any]:
-    """Calculate item-additive exposure and normalize it to a 0–100 PEI.
+    """Calculate a bounded, category-presence PEI from 0 to 100.
 
-    Each category contributes W_k * (1 - 2**(-n_k)) * A * V * C.
-    Repeated detections add exposure with diminishing returns. Since category
-    weights sum to R_MAX, raw total is bounded by R_MAX when A, V, and C are 1.
+    Each supported category contributes its weight once when at least one
+    instance is detected: W_k * I(n_k > 0) * A * V * C. This avoids halving
+    the contribution of a single detection. R_MAX is the sum of category
+    weights, so the score is bounded when A, V, and C are between 0 and 1.
     """
     area = clip_unit(area, "Relative area")
     visibility = clip_unit(visibility, "Visibility")
@@ -156,8 +157,8 @@ def calculate_pei(
             raise ValueError(f"Count for {category} must be a non-negative integer.") from exc
         if count < 0:
             raise ValueError(f"Count for {category} cannot be negative.")
-        count_factor = 0.0 if count == 0 else (1.0 - (2.0 ** (-count)))
-        contribution = weight * count_factor * factor
+        presence = 1.0 if count > 0 else 0.0
+        contribution = weight * presence * factor
         raw_total += contribution
         category_rows.append({
             "category": category, "count": count, "weight": weight,
@@ -165,7 +166,7 @@ def calculate_pei(
         })
     unbounded_score = 0.0 if R_MAX == 0 else 100.0 * raw_total / R_MAX
     score = max(0.0, min(100.0, unbounded_score))
-    level = "LOW" if score <= 33.33 else "MODERATE" if score <= 66.67 else "HIGH"
+    level = "LOW" if score <= 20.0 else "MODERATE" if score <= 50.0 else "HIGH"
     return {
         "counts": counts, "area": area, "visibility": visibility,
         "confidence": confidence, "factor": factor, "rows": category_rows,
@@ -177,14 +178,15 @@ def calculate_pei(
 def show_pei_calculation(result: Dict[str, Any]) -> None:
     """Render the item-based PEI formula and transparent arithmetic."""
     st.subheader("Mathematical PEI calculation")
-    st.latex(r"E_k = W_k(1-2^{-n_k})AVC")
+    st.latex(r"E_k = W_k\,I(n_k>0)\,A V C")
     st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
-    st.caption("Wₖ = sensitivity weight; nₖ = number of detections in category k; A = relative area; V = visibility; C = detection confidence. A, V, and C are shared inputs in this prototype. Repeated detections use diminishing returns.")
+    st.caption("Wₖ = category sensitivity weight; I(nₖ > 0) = 1 when at least one item in category k is detected, otherwise 0; A = relative area; V = visibility; C = detection confidence. These are shared measurement inputs in this prototype. Each category contributes once to prevent duplicate OCR detections from inflating the score.")
     st.markdown("**Step 1 — Calculate each category's item contribution**")
     for row in result["rows"]:
         st.write(
-            f"**{row['category']}**: E = {row['weight']:.2f} × {row['count']} × "
-            f"{result['area']:.2f} × {result['visibility']:.2f} × {result['confidence']:.2f} "
+            f"**{row['category']}**: E = {row['weight']:.2f} × "
+            f"{1 if row['count'] > 0 else 0} × {result['area']:.2f} × "
+            f"{result['visibility']:.2f} × {result['confidence']:.2f} "
             f"= **{row['contribution']:.4f}**"
         )
     pieces = " + ".join(f"{row['contribution']:.4f}" for row in result["rows"])
@@ -606,7 +608,7 @@ def render_pei_tool() -> None:
         return
     st.image(image, caption="Uploaded screenshot", width="stretch")
     with st.expander("PEI formula used for this scan", expanded=True):
-        st.latex(r"E_i = S_i A_i V_i C_i")
+        st.latex(r"E_k = W_k\,I(n_k>0)\,A V C")
         st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
         st.caption("The numerical substitution and final result appear after you run the scan.")
     with st.form("pei_form"):
@@ -780,19 +782,19 @@ def main() -> None:
         st.info("The equations below are the exact formulas used by this app. PEI weights and phishing thresholds are configurable research assumptions, not universally accepted standards; validate them before reporting scientific conclusions.")
         st.subheader("Privacy Exposure Index")
         st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
-        st.latex(r"PEI = 100\times\frac{\sum_k E_k}{R_{\max}},\quad R_{\max}=0.60")
-        st.write("Category weights: Email 0.15, Phone 0.15, URL 0.10, QR Code 0.20. A, V, and C are values from 0 to 1. Repeated detections contribute with diminishing returns so the PEI remains bounded by 100.")
+        st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_k E_k}{R_{\max}}\right),\quad R_{\max}=0.60")
+        st.write("Category weights: Email 0.15, Phone 0.15, URL 0.10, QR Code 0.20. A, V, and C range from 0 to 1. Each category contributes once if detected; repeated instances within a category do not add extra points. This keeps the score bounded and makes it easier to interpret.")
         st.subheader("Phishing indicator score")
         st.latex(r"S = \min\left(100,\sum_i w_i I_i\right)")
         st.write("The rule-based verdict is Safe for scores below 30, Suspicious for scores from 30 to below 60, and Phishing for scores of 60 or above. These are provisional research thresholds, not empirically validated probabilities.")
         st.subheader("Validation examples")
         st.markdown("**Example 1 — one email, A = 1.00, V = 1.00, C = 0.90**")
         sample1 = calculate_pei({"Email": 1, "Phone": 0, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
-        st.code(f"R = 0.15 × (1 − 2⁻¹) × 1.00 × 1.00 × 0.90 = 0.0675\nPEI = 100 × min(1, 0.0675 / 0.60) = {sample1['score']:.2f}")
+        st.code(f"R = 0.15 × 1 × 1.00 × 1.00 × 0.90 = 0.1350\nPEI = 100 × min(1, 0.1350 / 0.60) = {sample1['score']:.2f}")
         st.markdown("**Example 2 — one email, one phone, A = 1.00, V = 1.00, C = 0.90**")
         sample2 = calculate_pei({"Email": 1, "Phone": 1, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
-        st.code(f"R = 0.0675 + 0.0675 = 0.1350\nPEI = 100 × min(1, 0.1350 / 0.60) = {sample2['score']:.2f}")
-        st.caption("For a defensible research result, document how area, visibility, confidence, weights, and thresholds were selected, then validate them against independently labelled screenshots.")
+        st.code(f"R = 0.1350 + 0.1350 = 0.2700\nPEI = 100 × min(1, 0.2700 / 0.60) = {sample2['score']:.2f}")
+        st.markdown("**Illustrative interpretation with default C = 0.90 and A = V = 1.00**  \nOne email category: 22.50/100. Email + phone: 45.00/100. Email + phone + URL: 60.00/100. All four categories: 90.00/100. The current provisional bands are LOW ≤ 20, MODERATE > 20 to 50, and HIGH > 50; these thresholds must be evaluated against manually labelled screenshots before research conclusions are made.")
     st.divider()
     st.caption("Sentinel is a research prototype. OCR and rule/model predictions can be wrong; validate the detector, weights, thresholds, and model on independent test data before making research claims.")
 
