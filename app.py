@@ -781,7 +781,7 @@ def main() -> None:
         st.header("Formulas and interpretation")
         st.info("The equations below are the exact formulas used by this app. PEI weights and phishing thresholds are configurable research assumptions, not universally accepted standards; validate them before reporting scientific conclusions.")
         st.subheader("Privacy Exposure Index")
-        st.latex(r"E_k = w_k(1 - 2^{-n_k})AVC")
+        st.latex(r"E_k = W_k\,I(n_k>0)\,A V C")
         st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_k E_k}{R_{\max}}\right),\quad R_{\max}=0.60")
         st.write("Category weights: Email 0.15, Phone 0.15, URL 0.10, QR Code 0.20. A, V, and C range from 0 to 1. Each category contributes once if detected; repeated instances within a category do not add extra points. This keeps the score bounded and makes it easier to interpret.")
         st.subheader("Phishing indicator score")
