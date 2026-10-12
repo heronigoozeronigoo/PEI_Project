@@ -1,7 +1,7 @@
 """Sentinel — screenshot privacy exposure and phishing screening research app.
 
 Run with: streamlit run app.py
-Required/optional local files: detector.py, pei_model.pkl, email_phishing_model_v2.pkl.
+Required/optional local files: detector.py and email_phishing_model_v2.pkl.
 """
 from pathlib import Path
 import re
@@ -9,7 +9,6 @@ from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
-import pandas as pd
 from PIL import Image, UnidentifiedImageError
 
 try:
@@ -28,7 +27,6 @@ except Exception:
     detect_sensitive_information = None
 
 BASE_DIR = Path(__file__).resolve().parent
-PEI_MODEL_PATH = BASE_DIR / "pei_model.pkl"
 PHISHING_MODEL_PATH = BASE_DIR / "email_phishing_model_v2.pkl"
 ALLOWED_TYPES = ["png", "jpg", "jpeg"]
 
@@ -72,7 +70,6 @@ def optional_model(path: Path) -> Tuple[Optional[Any], str]:
         return None, str(exc)
 
 
-pei_model, pei_model_error = optional_model(PEI_MODEL_PATH)
 phishing_model, phishing_model_error = optional_model(PHISHING_MODEL_PATH)
 
 
@@ -495,13 +492,11 @@ def render_header() -> None:
 def render_status() -> None:
     """Display optional dependency and model status without blocking the app."""
     with st.expander("System status · dependencies and models", expanded=False):
-        c1, c2, c3 = st.columns(3)
+        c1, c2 = st.columns(2)
         c1.write("**Privacy detector**")
         c1.success("Available") if detect_sensitive_information else c1.error("detector.py import failed")
-        c2.write("**PEI model**")
-        c2.success("Loaded") if pei_model is not None else c2.info(f"Optional model unavailable: {pei_model_error}")
-        c3.write("**Phishing model**")
-        c3.success("Loaded") if phishing_model is not None else c3.info(f"Optional model unavailable: {phishing_model_error}")
+        c2.write("**Phishing model**")
+        c2.success("Loaded") if phishing_model is not None else c2.info(f"Optional model unavailable: {phishing_model_error}")
         if pytesseract is None:
             st.warning("pytesseract is not installed. Install requirements and the Tesseract OCR system engine for phishing screenshot OCR.")
 
@@ -594,22 +589,6 @@ def render_pei_tool() -> None:
         st.warning(f"PEI result: MODERATE — {result['score']:.2f}/100")
     else:
         st.error(f"PEI result: HIGH — {result['score']:.2f}/100")
-    if pei_model is not None:
-        st.subheader("Optional PEI machine-learning comparison")
-        try:
-            model_input = pd.DataFrame(
-                [[counts["Email"], counts["Phone"], counts["URL"], counts["QR Code"], result["raw_total"], result["score"]]],
-                columns=["email_count", "phone_count", "url_count", "qr_count", "raw_exposure", "pei"],
-            )
-            prediction = str(pei_model.predict(model_input)[0]).strip().upper()
-            st.write(f"PEI model prediction: **{prediction}**")
-            if prediction == result["level"]:
-                st.success("Model prediction matches the formula-based category.")
-            else:
-                st.warning("Model prediction differs from the formula-based category.")
-        except Exception as exc:
-            st.warning("The optional PEI model could not process its six expected numeric features; the mathematical PEI remains available.")
-            st.caption(str(exc))
     with st.expander("OCR text returned by detector"):
         st.text(found["text"] or "No OCR text was returned.")
 
