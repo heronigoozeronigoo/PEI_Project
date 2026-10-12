@@ -461,12 +461,45 @@ def render_phishing_result(email_text: str) -> None:
     st.divider()
     st.subheader("2. Machine-learning output")
     if model_label is not None:
-        st.metric("Raw model class", model_label)
+        # Convert the model output into an easy-to-read risk band. When a
+        # phishing-class score is available, use provisional 0–33/33–67/67–100
+        # bands; otherwise map the predicted class without inventing a score.
+        if model_probability is not None:
+            if model_probability < 0.33:
+                ml_risk_level = "LOW"
+                ml_risk_description = "The model assigns a lower phishing score."
+            elif model_probability < 0.67:
+                ml_risk_level = "MODERATE"
+                ml_risk_description = "The model assigns an intermediate phishing score; review the message carefully."
+            else:
+                ml_risk_level = "HIGH"
+                ml_risk_description = "The model assigns a higher phishing score; do not click links or share information until independently verified."
+        elif model_label == "Phishing":
+            ml_risk_level = "HIGH"
+            ml_risk_description = "The model predicted the phishing class, but no class probability was available."
+        elif model_label == "Safe":
+            ml_risk_level = "LOW"
+            ml_risk_description = "The model predicted the safe class, but this does not guarantee the email is legitimate."
+        else:
+            ml_risk_level = "MODERATE"
+            ml_risk_description = "The model returned an uncertain or unrecognized class; manually review the message."
+
+        ml_col1, ml_col2 = st.columns(2)
+        ml_col1.metric("Machine-learning risk level", ml_risk_level)
+        ml_col2.metric("Raw model class", model_label)
+        if ml_risk_level == "HIGH":
+            st.error(ml_risk_description)
+        elif ml_risk_level == "MODERATE":
+            st.warning(ml_risk_description)
+        else:
+            st.success(ml_risk_description)
+
         if model_probability is not None:
             st.metric("Model score for phishing class", f"{model_probability * 100:.1f}%")
             st.caption(
-                "This is the model's output, not necessarily a calibrated real-world probability. "
-                "The screening result above uses a cautious review band."
+                "Risk bands are provisional display thresholds (LOW < 33%, MODERATE 33% to < 67%, "
+                "HIGH ≥ 67%). The model score is not necessarily a calibrated real-world probability; "
+                "validate these cutoffs on an independently labeled test set."
             )
     else:
         st.caption("No model prediction was available.")
