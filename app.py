@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
+import pandas as pd
 from PIL import Image, UnidentifiedImageError
 
 try:
@@ -518,7 +519,7 @@ def render_pei_tool() -> None:
     except ValueError as exc:
         st.error(str(exc))
         return
-    st.image(image, caption="Uploaded screenshot", use_container_width=True)
+    st.image(image, caption="Uploaded screenshot", width="stretch")
     with st.expander("PEI formula used for this scan", expanded=True):
         st.latex(r"E_i = S_i A_i V_i C_i")
         st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
@@ -532,7 +533,7 @@ def render_pei_tool() -> None:
             visibility = st.slider("Visibility (V)", 0.0, 1.0, DEFAULT_VISIBILITY, 0.05)
         with col3:
             confidence = st.slider("Detection confidence (C)", 0.0, 1.0, DEFAULT_CONFIDENCE, 0.05)
-        submitted = st.form_submit_button("Detect and calculate PEI", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("Detect and calculate PEI", type="primary", width="stretch")
     if not submitted:
         return
     with st.spinner("Detecting supported sensitive information..."):
@@ -596,7 +597,10 @@ def render_pei_tool() -> None:
     if pei_model is not None:
         st.subheader("Optional PEI machine-learning comparison")
         try:
-            model_input = [[counts["Email"], counts["Phone"], counts["URL"], counts["QR Code"], result["raw_total"], result["score"]]]
+            model_input = pd.DataFrame(
+                [[counts["Email"], counts["Phone"], counts["URL"], counts["QR Code"], result["raw_total"], result["score"]]],
+                columns=["email_count", "phone_count", "url_count", "qr_count", "raw_exposure", "pei"],
+            )
             prediction = str(pei_model.predict(model_input)[0]).strip().upper()
             st.write(f"PEI model prediction: **{prediction}**")
             if prediction == result["level"]:
@@ -645,12 +649,12 @@ def render_phishing_tool() -> None:
             st.error(str(exc))
             return
 
-        st.image(image, caption="Uploaded email screenshot", use_container_width=True)
+        st.image(image, caption="Uploaded email screenshot", width="stretch")
         if not st.button(
             "Analyze email screenshot",
             type="primary",
             key="analyze_phishing",
-            use_container_width=True,
+            width="stretch",
         ):
             return
 
@@ -681,7 +685,7 @@ def render_phishing_tool() -> None:
             "Analyze pasted email",
             type="primary",
             key="analyze_pasted_email",
-            use_container_width=True,
+            width="stretch",
         ):
             return
         email_text = pasted_text.strip()
