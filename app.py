@@ -139,10 +139,9 @@ def calculate_pei(
 ) -> Dict[str, Any]:
     """Calculate item-additive exposure and normalize it to a 0–100 PEI.
 
-    Each detected item contributes S_i * A * V * C, where S_i is the
-    sensitivity weight for that item's category. R_MAX is the maximum raw
-    score for one item in each supported category. The final score is capped
-    at 100 so repeated detections cannot exceed the index range.
+    Each category contributes W_k * (1 - 2**(-n_k)) * A * V * C.
+    Repeated detections add exposure with diminishing returns. Since category
+    weights sum to R_MAX, raw total is bounded by R_MAX when A, V, and C are 1.
     """
     area = clip_unit(area, "Relative area")
     visibility = clip_unit(visibility, "Visibility")
@@ -157,7 +156,8 @@ def calculate_pei(
             raise ValueError(f"Count for {category} must be a non-negative integer.") from exc
         if count < 0:
             raise ValueError(f"Count for {category} cannot be negative.")
-        contribution = weight * count * factor
+        count_factor = 0.0 if count == 0 else (1.0 - (2.0 ** (-count)))
+        contribution = weight * count_factor * factor
         raw_total += contribution
         category_rows.append({
             "category": category, "count": count, "weight": weight,
@@ -177,9 +177,9 @@ def calculate_pei(
 def show_pei_calculation(result: Dict[str, Any]) -> None:
     """Render the item-based PEI formula and transparent arithmetic."""
     st.subheader("Mathematical PEI calculation")
-    st.latex(r"E_i = S_i A_i V_i C_i")
+    st.latex(r"E_k = W_k(1-2^{-n_k})AVC")
     st.latex(r"PEI = 100\times\min\left(1,\frac{\sum_i E_i}{R_{\max}}\right),\quad R_{\max}=0.60")
-    st.caption("Sᵢ = sensitivity weight; Aᵢ = relative area; Vᵢ = visibility; Cᵢ = detection confidence. In this prototype, A, V, and C are shared measurement inputs for all detected items.")
+    st.caption("Wₖ = sensitivity weight; nₖ = number of detections in category k; A = relative area; V = visibility; C = detection confidence. A, V, and C are shared inputs in this prototype. Repeated detections use diminishing returns.")
     st.markdown("**Step 1 — Calculate each category's item contribution**")
     for row in result["rows"]:
         st.write(
@@ -788,10 +788,10 @@ def main() -> None:
         st.subheader("Validation examples")
         st.markdown("**Example 1 — one email, A = 1.00, V = 1.00, C = 0.90**")
         sample1 = calculate_pei({"Email": 1, "Phone": 0, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
-        st.code(f"R = 0.15 × (1 − 2⁻¹) × 1.00 × 1.00 × 0.90 = 0.0675\nPEI = 100 × 0.0675 / 0.60 = {sample1['score']:.2f}")
+        st.code(f"R = 0.15 × (1 − 2⁻¹) × 1.00 × 1.00 × 0.90 = 0.0675\nPEI = 100 × min(1, 0.0675 / 0.60) = {sample1['score']:.2f}")
         st.markdown("**Example 2 — one email, one phone, A = 1.00, V = 1.00, C = 0.90**")
         sample2 = calculate_pei({"Email": 1, "Phone": 1, "URL": 0, "QR Code": 0}, 1, 1, 0.9)
-        st.code(f"R = 0.0675 + 0.0675 = 0.1350\nPEI = 100 × 0.1350 / 0.60 = {sample2['score']:.2f}")
+        st.code(f"R = 0.0675 + 0.0675 = 0.1350\nPEI = 100 × min(1, 0.1350 / 0.60) = {sample2['score']:.2f}")
         st.caption("For a defensible research result, document how area, visibility, confidence, weights, and thresholds were selected, then validate them against independently labelled screenshots.")
     st.divider()
     st.caption("Sentinel is a research prototype. OCR and rule/model predictions can be wrong; validate the detector, weights, thresholds, and model on independent test data before making research claims.")
