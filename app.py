@@ -217,45 +217,89 @@ def extract_text(image: Image.Image) -> str:
 
 
 def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
-    """Calculate a transparent heuristic risk score from specific warning signals.
+    """Score multiple common phishing signals using phrase and pattern matching.
 
-    This score is a screening aid, not a probability or a validated substitute for
-    the trained classifier. Merely containing a URL no longer adds risk by itself.
+    Points are provisional rule-based indicators, not probabilities. A single
+    category is counted once to avoid inflating scores by repeating a phrase.
     """
-    text = email_text.lower()
-    # Use stronger pressure phrases; ordinary promotional calls to action
-    # (for example, "start creating" or "jump in") are not phishing evidence.
+    text = re.sub(r"\s+", " ", str(email_text or "").lower()).strip()
+
+    # Phrases plus patterns cover common wording variations without treating
+    # every mention of a password, account, URL, or verification as malicious.
+    credential_phrases = [
+        "enter your password", "confirm your password", "send your password",
+        "provide your password", "share your otp", "send the otp", "give us your otp",
+        "reply with your otp", "enter your one-time password", "share your one-time password",
+        "provide your login credentials", "send your login credentials",
+        "enter your login credentials", "update your payment details",
+        "enter your bank details", "send your bank details",
+        "provide your credit card number", "enter your credit card number",
+        "reply with your password", "verify your identity by entering",
+        "verify your account by entering", "confirm your account details",
+        "provide your verification code", "share your verification code",
+        "send us the verification code", "enter the verification code",
+        "provide your social security number", "enter your personal information",
+    ]
+    credential_patterns = [
+        r"\b(?:enter|send|share|provide|reply with|submit|type in)\b.{0,45}\b(?:password|passcode|login credentials|one[- ]time password|otp|verification code|security code|credit card number|bank details)\b",
+        r"\b(?:password|otp|one[- ]time password|verification code|security code)\b.{0,35}\b(?:send|share|reply|provide|enter|submit)\b",
+        r"\b(?:confirm|verify|validate|restore|unlock)\b.{0,35}\b(?:account|login|payment|billing)\b.{0,50}\b(?:password|credentials|code|card|bank details)\b",
+    ]
     urgency_terms = [
         "urgent action required", "respond immediately", "within 24 hours",
         "final warning", "your account will expire", "act immediately",
-        "failure to respond", "limited time to verify",
+        "failure to respond", "limited time to verify", "immediate action required",
+        "expires today", "today only", "right away", "as soon as possible",
+        "within 12 hours", "within 48 hours", "account will expire",
+        "avoid suspension", "verify immediately", "last chance",
     ]
-    # Flag explicit requests to disclose credentials or sensitive data.
-    # Generic words such as "verification code" or "verify your account" are
-    # intentionally excluded because legitimate services use them too.
-    credential_phrases = [
-        "enter your password", "confirm your password", "send your password",
-        "provide your password", "share your otp", "send the otp",
-        "give us your otp", "reply with your otp", "enter your one-time password",
-        "share your one-time password", "provide your login credentials",
-        "send your login credentials", "enter your login credentials",
-        "update your payment details", "enter your bank details",
-        "send your bank details", "provide your credit card number",
-        "enter your credit card number", "reply with your password",
+    urgency_patterns = [
+        r"\b(?:immediately|urgent(?:ly)?|right away)\b",
+        r"\bwithin\s+\d+\s+(?:minutes?|hours?|days?)\b",
+        r"\b(?:before|by)\s+(?:today|midnight|the deadline)\b",
     ]
     threat_terms = [
         "account will be closed", "account suspended", "account is suspended",
         "account locked", "will be terminated", "legal action", "access will be blocked",
-        "unauthorized activity", "service will be discontinued",
+        "unauthorized activity", "service will be discontinued", "account has been blocked",
+        "permanently suspend", "permanent suspension", "account will be disabled",
+        "access has been restricted", "failure to comply", "your account is on hold",
+        "security alert", "unusual sign-in activity",
+    ]
+    threat_patterns = [
+        r"\b(?:account|profile|access|service)\b.{0,35}\b(?:suspend(?:ed)?|disable(?:d)?|block(?:ed)?|lock(?:ed)?|terminat(?:ed|ion)|restrict(?:ed)?|clos(?:ed|ure))\b",
+        r"\b(?:legal action|law enforcement|penalt(?:y|ies)|prosecut(?:ion|ed))\b",
     ]
     money_terms = [
         "claim your reward", "free money", "payment required", "transfer money",
         "claim your gift", "you have won", "you are the winner", "prize money",
-        "refund available", "urgent payment", "bank details",
+        "refund available", "urgent payment", "bank details", "cash prize",
+        "claim your prize", "you won a prize", "unclaimed refund", "receive your reward",
+        "investment guaranteed", "limited-time offer", "gift card", "lottery winner",
     ]
-    urls = re.findall(r"(?:https?://|www\.)[^\s<>\"']+", email_text, flags=re.IGNORECASE)
+    money_patterns = [
+        r"\b(?:won|winner of|claim)\b.{0,35}\b(?:prize|reward|cash|money|gift card|lottery|refund)\b",
+        r"\b(?:refund|prize|reward|payment|transfer)\b.{0,35}\b(?:claim|release|collect|confirm|pay|fee)\b",
+    ]
+
+    # Recognize URL-prefixed links and naked domains (e.g., login-example.com).
+    # The negative lookbehind prevents extracting the domain portion of an email.
+    url_pattern = re.compile(
+        r"(?<![@\w.-])(?:https?://|www\.)[^\s<>\"']+"
+        r"|(?<![@\w.-])(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+"
+        r"(?:com|net|org|edu|gov|mil|int|co|io|ai|app|site|online|info|biz|me|ph|uk|us|xyz|top|shop|store|live|cloud|click|link|vip)"
+        r"(?:/[^\s<>\"']*)?",
+        flags=re.IGNORECASE,
+    )
+    urls = []
+    for match in url_pattern.finditer(str(email_text or "")):
+        candidate = match.group(0).rstrip(".,;:!?) ]}")
+        if candidate and candidate not in urls:
+            urls.append(candidate)
+
     shortener_hosts = {
-        "bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy", "shorturl.at",
+        "bit.ly", "tinyurl.com", "t.co", "is.gd", "cutt.ly", "rb.gy",
+        "shorturl.at", "ow.ly", "buff.ly", "rebrand.ly", "lnkd.in",
     }
     suspicious_url_reasons = []
     for raw_url in urls:
@@ -273,15 +317,24 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
             reasons.append("punycode domain may use look-alike characters")
         if host.count("-") >= 3:
             reasons.append("domain contains several hyphens")
+        if len(host) > 45:
+            reasons.append("unusually long hostname")
+        if host.startswith("secure-") or host.startswith("account-") or host.startswith("verify-") or host.startswith("login-"):
+            reasons.append("hostname uses a login/verification-style prefix")
         if reasons:
             suspicious_url_reasons.append({"url": candidate, "reasons": reasons})
 
+    def matched(phrases: List[str], patterns: List[str]) -> bool:
+        return any(phrase in text for phrase in phrases) or any(
+            re.search(pattern, text, flags=re.IGNORECASE) for pattern in patterns
+        )
+
     flags = {
-        "Credential / sensitive-data request": int(any(term in text for term in credential_phrases)),
+        "Credential / sensitive-data request": int(matched(credential_phrases, credential_patterns)),
         "Suspicious URL pattern": int(bool(suspicious_url_reasons)),
-        "Urgency / pressure": int(any(term in text for term in urgency_terms)),
-        "Threat / consequence": int(any(term in text for term in threat_terms)),
-        "Money / reward bait": int(any(term in text for term in money_terms)),
+        "Urgency / pressure": int(matched(urgency_terms, urgency_patterns)),
+        "Threat / consequence": int(matched(threat_terms, threat_patterns)),
+        "Money / reward bait": int(matched(money_terms, money_patterns)),
         "Multiple URLs": int(len(urls) >= 2),
     }
     points = {name: PHISHING_WEIGHTS[name] * flag for name, flag in flags.items()}
@@ -289,21 +342,25 @@ def get_phishing_indicators(email_text: str) -> Dict[str, Any]:
     verdict = "Lower indicator score" if total < 25 else "Elevated indicators" if total < 50 else "High indicator score"
 
     sentence_patterns = {
-        "Urgency / pressure": urgency_terms,
-        "Credential / sensitive-data request": credential_phrases,
-        "Threat / consequence": threat_terms,
-        "Money / reward bait": money_terms,
+        "Urgency / pressure": urgency_terms + urgency_patterns,
+        "Credential / sensitive-data request": credential_phrases + credential_patterns,
+        "Threat / consequence": threat_terms + threat_patterns,
+        "Money / reward bait": money_terms + money_patterns,
     }
     suspicious_sentences = []
-    for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", email_text):
+    for sentence in re.split(r"(?<=[.!?])\s+|[\r\n]+", str(email_text or "")):
         cleaned = sentence.strip(" \t\r\n•-–")
         if not cleaned:
             continue
-        reasons = [
-            indicator for indicator, terms in sentence_patterns.items()
-            if any(term in cleaned.lower() for term in terms)
-        ]
-        if any(cleaned_url in cleaned for item in suspicious_url_reasons for cleaned_url in [item["url"]]):
+        lower_sentence = cleaned.lower()
+        reasons = []
+        for indicator, terms in sentence_patterns.items():
+            if any(
+                (term in lower_sentence) if not term.startswith(r"\b") else bool(re.search(term, lower_sentence, flags=re.IGNORECASE))
+                for term in terms
+            ):
+                reasons.append(indicator)
+        if any(item["url"] in cleaned for item in suspicious_url_reasons):
             reasons.append("Contains a URL with a suspicious pattern")
         if reasons:
             suspicious_sentences.append({"sentence": cleaned, "reasons": list(dict.fromkeys(reasons))})
