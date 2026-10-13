@@ -436,9 +436,6 @@ def render_phishing_result(email_text: str) -> None:
     st.subheader("Email result")
     st.write(f"**Result: {triage.title()}**")
     st.write(triage_reason)
-    st.caption(
-        "This result is based on the machine-learning model's prediction. It is not a definitive determination that an email is safe or phishing."
-    )
 
     st.divider()
     st.subheader("2. Machine-learning output")
