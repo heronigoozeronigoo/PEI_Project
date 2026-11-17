@@ -14,7 +14,15 @@ from sklearn.svm import LinearSVC
 from sklearn.utils.class_weight import compute_sample_weight
 
 BASE = Path(__file__).resolve().parent
-DATA_PATH = BASE / "data" / "SMS_Phishing_Dataset_Cleaned_5971.csv"
+# Accept the documented data/ location and the filename currently committed
+# at the repository root. This prevents Streamlit Cloud from failing when the
+# dataset was uploaded to the root with GitHub's duplicate-safe "_2" suffix.
+DATA_CANDIDATES = (
+    BASE / "data" / "SMS_Phishing_Dataset_Cleaned_5971.csv",
+    BASE / "SMS_Phishing_Dataset_Cleaned_5971.csv",
+    BASE / "SMS_Phishing_Dataset_Cleaned_5971_2.csv",
+)
+DATA_PATH = next((path for path in DATA_CANDIDATES if path.is_file()), DATA_CANDIDATES[0])
 MODEL_PATH = BASE / "models" / "sms_classifier.joblib"
 METRICS_PATH = BASE / "models" / "sms_evaluation.json"
 LABELS = ["ham", "spam", "smishing"]
@@ -27,9 +35,13 @@ def _normalize_text(s):
 
 @st.cache_data(show_spinner=False)
 def load_sms_dataset():
-    if not DATA_PATH.exists():
-        raise FileNotFoundError(f"Dataset not found: {DATA_PATH.relative_to(BASE)}. Add the supplied CSV to the project's data folder.")
-    df = pd.read_csv(DATA_PATH)
+    if not DATA_PATH.is_file():
+        expected = ", ".join(str(path.relative_to(BASE)) for path in DATA_CANDIDATES)
+        raise FileNotFoundError(
+            "SMS dataset not found. Add the supplied CSV to one of these locations: " + expected
+        )
+    # utf-8-sig safely handles the optional BOM often present in exported CSVs.
+    df = pd.read_csv(DATA_PATH, encoding="utf-8-sig")
     required = {"LABEL", "TEXT", "URL", "EMAIL", "PHONE"}
     missing = required - set(df.columns)
     if missing:
