@@ -513,18 +513,57 @@ def render_header() -> None:
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-    .stApp { background: radial-gradient(ellipse at 12% 0%, rgba(37,99,235,.14), transparent 35%), #0b1120; }
+
+    /* Soft blush-pink theme */
+    .stApp {
+        background:
+          radial-gradient(ellipse at 8% 0%, rgba(255,182,213,.42), transparent 38%),
+          radial-gradient(ellipse at 92% 12%, rgba(244,194,226,.32), transparent 34%),
+          linear-gradient(135deg, #fff7fb 0%, #fdebf4 52%, #fff5fa 100%);
+        color: #56364a;
+    }
     .block-container { max-width: 1220px; padding-top: 2rem; padding-bottom: 3rem; }
-    h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.025em; }
-    [data-testid="stMetric"] { background:rgba(24,36,58,.72); border:1px solid rgba(148,163,184,.2); padding:15px; border-radius:15px; }
-    [data-testid="stFileUploader"] { background:rgba(20,31,51,.45); border:1px dashed rgba(96,165,250,.5); border-radius:15px; padding:10px; }
-    .hero { padding:26px 28px; border-radius:22px; background:linear-gradient(120deg,rgba(30,64,175,.35),rgba(15,118,110,.2)),rgba(15,23,42,.8); border:1px solid rgba(125,211,252,.22); margin-bottom:20px; }
-    .eyebrow { color:#7dd3fc; font-size:.75rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
-    .hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3rem); line-height:1.08; font-weight:700; color:#f8fbff; margin:.55rem 0 .75rem; }
-    .hero-copy { max-width:780px; color:#bdcbe0; line-height:1.65; }
-    .pill { display:inline-block; padding:5px 10px; margin:8px 6px 0 0; border:1px solid rgba(125,211,252,.25); border-radius:999px; color:#dbeafe; background:rgba(15,23,42,.4); font-size:.78rem; }
-    .stButton>button { min-height:44px; border-radius:11px; font-weight:700; }
+    h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.025em; color:#713d5d !important; }
+    p, label, [data-testid="stMarkdownContainer"] { color:#68485b; }
+    [data-testid="stMetric"] {
+        background:rgba(255,255,255,.82);
+        border:1px solid #f2c8dc;
+        padding:15px;
+        border-radius:15px;
+        box-shadow:0 5px 18px rgba(166,92,128,.07);
+    }
+    [data-testid="stMetricLabel"] { color:#96627e !important; }
+    [data-testid="stMetricValue"] { color:#713d5d !important; }
+    [data-testid="stFileUploader"] {
+        background:rgba(255,255,255,.68);
+        border:1px dashed #e7a8c7;
+        border-radius:15px;
+        padding:10px;
+    }
+    .hero {
+        padding:26px 28px;
+        border-radius:22px;
+        background:linear-gradient(120deg,rgba(255,205,225,.96),rgba(248,218,238,.96)),#fff0f7;
+        border:1px solid #efbfd5;
+        box-shadow:0 12px 32px rgba(174,91,133,.10);
+        margin-bottom:20px;
+    }
+    .eyebrow { color:#a34d78; font-size:.75rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
+    .hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3rem); line-height:1.08; font-weight:700; color:#713d5d; margin:.55rem 0 .75rem; }
+    .hero-copy { max-width:780px; color:#704e62; line-height:1.65; }
+    .pill { display:inline-block; padding:5px 10px; margin:8px 6px 0 0; border:1px solid #e8b4ce; border-radius:999px; color:#854b6c; background:rgba(255,255,255,.65); font-size:.78rem; }
+    .stButton>button {
+        min-height:44px;
+        border-radius:11px;
+        font-weight:700;
+        background:#d96b9b;
+        border:1px solid #c85c8c;
+        color:white;
+    }
+    .stButton>button:hover { background:#c85c8c; border-color:#b94c7d; color:white; }
     [data-testid="stAlert"] { border-radius:12px; }
+    [data-testid="stTabs"] button[role="tab"] { color:#8b5572; }
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color:#b34f7e; border-bottom-color:#d96b9b; }
     </style>
     <div class="hero">
       <div class="eyebrow">Sentinel • Digital Safety Lab</div>
