@@ -509,67 +509,177 @@ def render_phishing_result(email_text: str) -> None:
 
 # ---------------------------------- UI -------------------------------------
 def render_header() -> None:
-    """Render consistent application header and global styling."""
+    """Render the pastel storybook-style Sentinel header and global styling."""
     st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');
-
-    /* Soft blush-pink theme */
+    /* Arial throughout, with a soft storybook-inspired Sentinel palette. */
+    html, body, [class*="css"], [data-testid="stAppViewContainer"],
+    [data-testid="stMarkdownContainer"], input, textarea, button, select {
+        font-family: Arial, Helvetica, sans-serif !important;
+    }
     .stApp {
         background:
-          radial-gradient(ellipse at 8% 0%, rgba(255,182,213,.42), transparent 38%),
-          radial-gradient(ellipse at 92% 12%, rgba(244,194,226,.32), transparent 34%),
-          linear-gradient(135deg, #fff7fb 0%, #fdebf4 52%, #fff5fa 100%);
-        color: #56364a;
+          radial-gradient(circle at 8% 5%, rgba(255,190,218,.48), transparent 28%),
+          radial-gradient(circle at 92% 14%, rgba(255,225,235,.8), transparent 30%),
+          linear-gradient(145deg, #fff9fb 0%, #fdebf3 48%, #fff7f1 100%);
+        color: #573b49;
     }
-    .block-container { max-width: 1220px; padding-top: 2rem; padding-bottom: 3rem; }
-    h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.025em; color:#713d5d !important; }
-    p, label, [data-testid="stMarkdownContainer"] { color:#68485b; }
+    .block-container { max-width: 1220px; padding: 1.6rem 2rem 3rem; }
+    h1, h2, h3, h4, h5, h6 {
+        font-family: Arial, Helvetica, sans-serif !important;
+        font-weight: 700 !important;
+        letter-spacing: -.02em;
+        color: #713f58 !important;
+    }
+    p, label, li, [data-testid="stMarkdownContainer"] { color: #624957; }
     [data-testid="stMetric"] {
-        background:rgba(255,255,255,.82);
-        border:1px solid #f2c8dc;
-        padding:15px;
-        border-radius:15px;
-        box-shadow:0 5px 18px rgba(166,92,128,.07);
+        background: rgba(255,255,255,.88);
+        border: 1px solid #f1c9da;
+        padding: 16px;
+        border-radius: 19px;
+        box-shadow: 0 7px 20px rgba(160,91,121,.08);
     }
-    [data-testid="stMetricLabel"] { color:#96627e !important; }
-    [data-testid="stMetricValue"] { color:#713d5d !important; }
+    [data-testid="stMetricLabel"] { color: #96647c !important; }
+    [data-testid="stMetricValue"] { color: #713f58 !important; }
     [data-testid="stFileUploader"] {
-        background:rgba(255,255,255,.68);
-        border:1px dashed #e7a8c7;
-        border-radius:15px;
-        padding:10px;
+        background: rgba(255,255,255,.72);
+        border: 1.5px dashed #e5a9c3;
+        border-radius: 18px;
+        padding: 12px;
+    }
+    [data-testid="stTabs"] {
+        background: rgba(255,255,255,.68);
+        border: 1px solid #f0cddd;
+        border-radius: 18px;
+        padding: 8px 12px 0;
+        box-shadow: 0 5px 18px rgba(160,91,121,.06);
+    }
+    [data-testid="stTabs"] button[role="tab"] {
+        color: #89566e;
+        font-family: Arial, Helvetica, sans-serif !important;
+        font-weight: 700;
+    }
+    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {
+        color: #b34f7e;
+        border-bottom-color: #d96b9b;
     }
     .hero {
-        padding:26px 28px;
-        border-radius:22px;
-        background:linear-gradient(120deg,rgba(255,205,225,.96),rgba(248,218,238,.96)),#fff0f7;
-        border:1px solid #efbfd5;
-        box-shadow:0 12px 32px rgba(174,91,133,.10);
-        margin-bottom:20px;
+        position: relative;
+        overflow: hidden;
+        padding: clamp(24px, 4vw, 38px);
+        border-radius: 27px;
+        background:
+          radial-gradient(circle at 90% 18%, rgba(255,255,255,.75), transparent 23%),
+          linear-gradient(120deg, #ffd9e8 0%, #f9e2ef 58%, #fff0e6 100%);
+        border: 1px solid #efc0d4;
+        box-shadow: 0 14px 34px rgba(174,91,133,.12);
+        margin: 0 0 22px;
     }
-    .eyebrow { color:#a34d78; font-size:.75rem; font-weight:700; letter-spacing:.15em; text-transform:uppercase; }
-    .hero-title { font-family:'Space Grotesk',sans-serif; font-size:clamp(2rem,4vw,3rem); line-height:1.08; font-weight:700; color:#713d5d; margin:.55rem 0 .75rem; }
-    .hero-copy { max-width:780px; color:#704e62; line-height:1.65; }
-    .pill { display:inline-block; padding:5px 10px; margin:8px 6px 0 0; border:1px solid #e8b4ce; border-radius:999px; color:#854b6c; background:rgba(255,255,255,.65); font-size:.78rem; }
-    .stButton>button {
-        min-height:44px;
-        border-radius:11px;
-        font-weight:700;
-        background:#d96b9b;
-        border:1px solid #c85c8c;
-        color:white;
+    .hero:after {
+        content: "✦  ♡  ✿";
+        position: absolute;
+        right: 26px;
+        top: 18px;
+        color: rgba(170,91,128,.48);
+        font-size: 22px;
+        letter-spacing: 12px;
+        pointer-events: none;
     }
-    .stButton>button:hover { background:#c85c8c; border-color:#b94c7d; color:white; }
-    [data-testid="stAlert"] { border-radius:12px; }
-    [data-testid="stTabs"] button[role="tab"] { color:#8b5572; }
-    [data-testid="stTabs"] button[role="tab"][aria-selected="true"] { color:#b34f7e; border-bottom-color:#d96b9b; }
+    .hero-topline {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+        color: #985273;
+        font-size: .78rem;
+        font-weight: 700;
+        letter-spacing: .12em;
+        text-transform: uppercase;
+    }
+    .mascot {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 15px;
+        background: rgba(255,255,255,.72);
+        border: 1px solid #efbfd5;
+        font-size: 25px;
+        box-shadow: 0 4px 12px rgba(160,91,121,.08);
+    }
+    .hero-title {
+        font-family: Arial, Helvetica, sans-serif !important;
+        font-size: clamp(2rem, 4vw, 3rem);
+        line-height: 1.1;
+        font-weight: 700;
+        color: #713f58;
+        margin: 13px 0 10px;
+    }
+    .hero-copy { max-width: 760px; color: #684b5a; line-height: 1.65; font-size: 1rem; }
+    .ribbon {
+        display: inline-block;
+        padding: 7px 15px;
+        margin: 13px 7px 0 0;
+        border: 1px solid #e8b4ca;
+        border-radius: 7px 16px 7px 16px;
+        color: #854b68;
+        background: rgba(255,255,255,.72);
+        box-shadow: 0 3px 8px rgba(160,91,121,.05);
+        font-size: .8rem;
+        font-weight: 700;
+    }
+    .section-ribbon {
+        display: inline-block;
+        padding: 8px 17px;
+        border-radius: 7px 16px 7px 16px;
+        background: linear-gradient(90deg, #f9d5e4, #fff0e7);
+        border: 1px solid #efc4d5;
+        color: #75465c;
+        font-weight: 700;
+    }
+    .stButton>button, [data-testid="stFormSubmitButton"] button {
+        min-height: 44px;
+        border-radius: 14px;
+        font-family: Arial, Helvetica, sans-serif !important;
+        font-weight: 700;
+        background: #d96b9b;
+        border: 1px solid #c85c8c;
+        color: #fff;
+        box-shadow: 0 5px 12px rgba(191,91,137,.15);
+        transition: transform .15s ease, box-shadow .15s ease;
+    }
+    .stButton>button:hover, [data-testid="stFormSubmitButton"] button:hover {
+        background: #c85c8c;
+        border-color: #b94c7d;
+        color: #fff;
+        transform: translateY(-1px);
+        box-shadow: 0 7px 15px rgba(191,91,137,.2);
+    }
+    [data-testid="stAlert"] { border-radius: 15px; }
+    [data-testid="stExpander"] {
+        background: rgba(255,255,255,.58);
+        border: 1px solid #f0d1de;
+        border-radius: 16px;
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #fce6ef, #fff7f2);
+        border-right: 1px solid #f0cddd;
+    }
+    [data-testid="stCaptionContainer"] { color: #896779; }
+    @media (max-width: 700px) {
+        .block-container { padding: 1rem 1rem 2rem; }
+        .hero { padding: 22px 19px; border-radius: 21px; }
+        .hero:after { right: 12px; top: 12px; font-size: 17px; letter-spacing: 6px; }
+        .hero-title { font-size: 2rem; padding-right: 8px; }
+        [data-testid="stTabs"] { padding: 5px 5px 0; }
+    }
     </style>
     <div class="hero">
-      <div class="eyebrow">Sentinel • Digital Safety Lab</div>
-      <div class="hero-title">See the risk before you share.</div>
-      <div class="hero-copy">Analyze screenshot privacy exposure and inspect email screenshots for common phishing indicators using transparent, explainable calculations.</div>
-      <span class="pill">Mathematical PEI</span><span class="pill">OCR + detector</span><span class="pill">ML phishing classifier</span>
+      <div class="hero-topline"><span class="mascot">🐰</span><span>Sentinel · Digital Safety Garden</span><span aria-hidden="true">✧</span></div>
+      <div class="hero-title">A little more care before you share.</div>
+      <div class="hero-copy">Your friendly digital safety companion. Check screenshot privacy exposure and inspect email screenshots for common phishing indicators with clear, explainable results.</div>
+      <span class="ribbon">♡ Privacy Exposure</span><span class="ribbon">✦ OCR Scanner</span><span class="ribbon">❀ Phishing Check</span>
     </div>
     """, unsafe_allow_html=True)
 
