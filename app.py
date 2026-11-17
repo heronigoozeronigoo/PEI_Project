@@ -678,8 +678,8 @@ def render_header() -> None:
     <div class="hero">
       <div class="hero-topline"><span class="mascot">🐰</span><span>Sentinel · Digital Safety Garden</span><span aria-hidden="true">✧</span></div>
       <div class="hero-title">A little more care before you share.</div>
-      <div class="hero-copy">Your friendly digital safety companion. Check screenshot privacy exposure and inspect email screenshots for common phishing indicators with clear, explainable results.</div>
-      <span class="ribbon">♡ Privacy Exposure</span><span class="ribbon">✦ OCR Scanner</span><span class="ribbon">❀ Phishing Check</span>
+      <div class="hero-copy">Your friendly digital safety companion. Check screenshot privacy exposure, inspect email phishing indicators, and screen SMS messages for spam and smishing patterns with clear, explainable results.</div>
+      <span class="ribbon">♡ Privacy Exposure</span><span class="ribbon">✦ OCR Scanner</span><span class="ribbon">❀ Email Phishing</span><span class="ribbon">✉ SMS Smishing</span>
     </div>
     """, unsafe_allow_html=True)
 
@@ -874,11 +874,14 @@ def main() -> None:
     """Render app navigation and selected tool."""
     render_header()
     render_status()
-    privacy_tab, phishing_tab, formula_tab = st.tabs(["🔐 PEI Calculator", "📧 Phishing Detector", "∑ Formula & Validation"])
+    privacy_tab, phishing_tab, sms_tab, formula_tab = st.tabs(["🔐 PEI Calculator", "📧 Phishing Detector", "📱 SMS Smishing", "∑ Formula & Validation"])
     with privacy_tab:
         render_pei_tool()
     with phishing_tab:
         render_phishing_tool()
+    with sms_tab:
+        from sms_module import render_sms_module
+        render_sms_module()
     with formula_tab:
         st.header("Formulas and interpretation")
         st.info("The equations below are the exact formulas used by this app. PEI weights and phishing thresholds are configurable research assumptions, not universally accepted standards; validate them before reporting scientific conclusions.")
